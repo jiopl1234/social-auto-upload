@@ -11,21 +11,23 @@ Tracker: local Markdown
 | 03 | [串行执行任务，同账号只允许一个写入者](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/03-single-writer-job-execution.md) | done |
 | 04 | [发布前验证不可变清单、素材版本和声明事实](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/04-immutable-content-preflight.md) | done |
 | 05 | [提交后失联或崩溃时只核对结果，不重新发布](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/05-submission-boundary-and-recovery.md) | done |
-| 06 | [任务超时或取消后准时退出，并释放浏览器资源](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/06-bounded-runtime-and-cancellation.md) | in-progress |
+| 06 | [任务超时或取消后准时退出，并释放浏览器资源](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/06-bounded-runtime-and-cancellation.md) | done |
 | 07 | [抖音视频完成准确填写、单次提交和作品核对](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/07-douyin-video-safe-delivery.md) | ready-for-agent |
 | 08 | [抖音图文复用可靠任务流程，并确认全部图片](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/08-douyin-note-safe-delivery.md) | ready-for-agent |
 | 09 | [小红书视频准确声明来源，并单次提交核对作品](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/09-xiaohongshu-video-safe-delivery.md) | ready-for-agent |
 | 10 | [小红书图文确认图片和文案后完成可追溯发布](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/10-xiaohongshu-note-safe-delivery.md) | ready-for-agent |
 | 11 | [视频号视频正确处理声明、实名验证和发布状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/11-channels-video-safe-delivery.md) | ready-for-agent |
-| 12 | [按显式时区到时启动任务，重启后不重复触发](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/12-timezone-aware-local-scheduling.md) | in-progress |
-| 13 | [一份清单分发到多个平台，部分失败可独立追踪](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/13-multi-platform-fanout.md) | in-progress |
+| 12 | [按显式时区到时启动任务，重启后不重复触发](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/12-timezone-aware-local-scheduling.md) | done |
+| 13 | [一份清单分发到多个平台，部分失败可独立追踪](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/13-multi-platform-fanout.md) | done |
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | ready-for-agent |
 | 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | ready-for-agent |
 
-当前 frontier：06、12、13。01–05 已完成并通过双线审查；其余 10 张票继续按依赖实施。每票验收结果以其自身记录为准，目标为完成全部 15 张票。
+当前 frontier：07、09、11、14。01–06、12、13 已完成并通过双线审查；其余 7 张票继续按依赖实施。每票验收结果以其自身记录为准，目标为完成全部 15 张票。
 
 04/05 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-review.md)。完整离线测试为 158 项与 20 项子测试通过；真实平台发布仍未验证。
 
 01 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-review.md)。未进行真实账号发布测试，整个方案尚未达到无人值守生产验收状态。
 
 历史草稿继续留存供审计；本目录为正式跟踪位置。
+
+06/12/13 的证据：`docs/audit/ticket-06-12-13-validation.md`、`docs/audit/ticket-06-12-13-review.md`。完整离线测试为 236 项与 20 项子测试通过；真实平台发布仍未验证。

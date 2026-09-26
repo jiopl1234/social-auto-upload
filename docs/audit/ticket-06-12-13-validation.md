@@ -1,8 +1,8 @@
 # 06、12、13 号票验证记录
 
-验证日期：2026-09-26。仓库：`C:/Users/Chinese/social-auto-upload`。本记录为本地实现候选；逐票完成状态须等待双线审查关闭。
+验证日期：2026-09-26。仓库：`C:/Users/Chinese/social-auto-upload`。实现与修复提交为 `f4d9f76`、`da9bb22`；Standards / Spec 独立复审均已关闭。
 
-首轮候选 `f4d9f76`/`1344409` 的完整结果为下述 225 项。双线审查随后要求 schema v3 回退保护、有界只读预检子进程及批次 publish_at 错误分类；修复后的整体验证和复审记录将在本文件补充，不把首轮结果当作后续修复已验证。
+首轮候选 `f4d9f76`/`1344409` 完整运行通过 225 项。双线审查后的修复 `da9bb22` 增加 schema v3 回退保护、有界只读预检子进程及批次 publish_at 错误分类；以下为修复后的最终结果。
 
 ## 公共行为
 
@@ -27,17 +27,21 @@
 uv run --frozen --with pytest --with pytest-timeout python -m pytest tests -q --timeout=30 --tb=short --junitxml=docs/audit/ticket-06-12-13-pytest.xml
 ```
 
-结果：**225 passed、20 subtests passed，47.77 秒**。包含真实 SQLite、多进程崩溃/互斥、CLI 子进程、可控时间、状态式发布目标、合成资源故障及真实浏览器本地 HTML。文本与 XML 输出保存在同目录。
+结果：**236 passed、20 subtests passed，109.44 秒**。包含真实 SQLite、多进程崩溃/互斥、CLI 子进程、可控时间、状态式发布目标、合成资源故障及真实浏览器本地 HTML。文本与 XML 输出保存在同目录。
 
 ```powershell
-uv run --frozen --with pytest --with pyright pyright orchestrator sau_cli.py tests/test_runtime_limits.py tests/test_browser_lifecycle.py tests/test_scheduling.py tests/test_fanout.py tests/test_account_maintenance.py tests/test_job_cli.py tests/test_job_worker.py tests/test_job_processes.py tests/test_manifest_preflight.py tests/test_job_delivery.py tests/test_metadata_readback.py tests/task_fixtures.py
+uv run --frozen --with pytest --with pyright pyright orchestrator sau_cli.py tests/test_preflight_runtime.py tests/test_schema_migration.py tests/test_runtime_limits.py tests/test_browser_lifecycle.py tests/test_scheduling.py tests/test_fanout.py tests/test_account_maintenance.py tests/test_job_cli.py tests/test_job_worker.py tests/test_job_processes.py tests/test_manifest_preflight.py tests/test_job_delivery.py tests/test_metadata_readback.py tests/task_fixtures.py
 ```
 
 结果：**0 errors、0 warnings**。该范围不声称所有历史 uploader 文件已满足严格类型检查。Windows 子进程结果文件短暂共享冲突改为在原有有界轮询中重试，没有延长等待上限。
 
+修复新增的公共故障验证包括：阻塞预检超时和取消仍能停止子进程并关闭浏览器；父进程被硬杀后预检子进程自行退出；准备后素材变化及会话绑定缺失被阻止；v2 数据保留升级到 v3；批次公共字段与目标覆盖中的 publish_at 均返回 UNSUPPORTED。另用 `git show 6bf4d58:orchestrator/store.py` 的真实旧 Store 验证其拒绝打开 v3 数据库。总预算测试调整为 2 秒，总工作 1.8 秒、清理预留 0.3 秒，使断言验证累计工作上限且容纳 Windows 子进程启动，不把 300 毫秒机器性能当作业务要求。
+
 ## 图证据与直接源码
 
 codebase-memory-mcp 项目 `C-Users-Chinese-social-auto-upload`，Tier 2，generation `2026-09-26T15:07:20Z`。关键符号查询 13/13，无后续页；worker.run_once 双向一跳追踪 27 个 callees、0 个静态 callers，无截断。TaskService 动态委派由直接源码确认。所有改动代码、配置和测试路径做过 coverage 核查；现有代码无记录缺口但 metadata_changed，因此依据当前源码与 diff。tests/fixtures 与 docs 被排除，已直接读取；uv.lock 直接核对。未据图作全仓完备性断言。
+
+修复补充 generation `2026-09-26T15:32:21Z`：预检子进程、TaskService.preflight_async、Store 迁移及分发持久化相关查询 9/9，无后续页；新增路径 coverage 无记录缺口但 metadata_changed，已核对当前源码。修复复审使用 `git diff 1344409...da9bb22`，同时保留整体固定基线。
 
 ## 环境与限制
 
