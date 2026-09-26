@@ -13,6 +13,8 @@ from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 from .errors import TaskError
+from .diagnostics import (diagnostic_error, diagnostic_event, diagnostic_stage,
+                          diagnostic_warnings, write_diagnostic_artifact)
 from .scheduling import is_due
 
 
@@ -240,8 +242,8 @@ class Store:
             "content_id": row["content_id"],
             "verified_at": row["verified_at"],
             "actual_metadata": cls._decode(row["actual_metadata_json"]),
-            "warnings": cls._decode(row["warnings_json"]),
-            "error": cls._decode(row["error_json"]),
+            "warnings": diagnostic_warnings(cls._decode(row["warnings_json"])),
+            "error": diagnostic_error(cls._decode(row["error_json"])) if row["error_json"] is not None else None,
             "evidence": cls._decode(row["evidence_json"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -318,9 +320,9 @@ class Store:
                     "job_id": row["job_id"],
                     "attempt_id": row["attempt_id"],
                     "status": row["status"],
-                    "stage": row["stage"],
+                    "stage": diagnostic_stage(row["stage"]),
                     "created_at": row["created_at"],
-                    "details": self._decode(row["details_json"]),
+                    "details": diagnostic_event(row["stage"], self._decode(row["details_json"])),
                 }
                 for row in rows
             ]
@@ -374,7 +376,7 @@ class Store:
                     "INSERT INTO fanout_targets (batch_id, target_index, platform, account, "
                     "expected_digest, normalized_json, error_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (batch_id, index, target["platform"], target["account"], expected_digest,
-                     normalized_json, _canonical_json(error) if error is not None else None),
+                     normalized_json, _canonical_json(diagnostic_error(error)) if error is not None else None),
                 )
             return batch_id
 
@@ -387,7 +389,8 @@ class Store:
             if row is None:
                 raise TaskError("STORAGE_ERROR", "Batch target is missing")
             return {
-                "job_id": row["job_id"], "error": self._decode(row["error_json"]),
+                "job_id": row["job_id"], "error": (diagnostic_error(self._decode(row["error_json"]))
+                                                     if row["error_json"] is not None else None),
                 "expected_digest": row["expected_digest"],
                 "manifest": self._decode(row["normalized_json"]),
             }
@@ -430,7 +433,7 @@ class Store:
             connection.execute(
                 "UPDATE fanout_targets SET error_json = ? WHERE batch_id = ? AND target_index = ? "
                 "AND job_id IS NULL AND error_json IS NULL",
-                (_canonical_json(error), batch_id, index),
+                (_canonical_json(diagnostic_error(error)), batch_id, index),
             )
 
     def fanout_status_rows(self, batch_id: str) -> dict[str, Any]:
@@ -461,9 +464,11 @@ class Store:
                     ).fetchone()
                 targets.append({
                     "platform": row["platform"], "account": row["account"], "job_id": row["job_id"],
-                    "error": self._decode(row["error_json"]), "job": job,
+                    "error": (diagnostic_error(self._decode(row["error_json"]))
+                              if row["error_json"] is not None else None), "job": job,
                     "account_status": account["status"] if account is not None else None,
-                    "pause_reason": self._decode(account["pause_reason"]) if account is not None else None,
+                    "pause_reason": (diagnostic_error(self._decode(account["pause_reason"]))
+                                     if account is not None and account["pause_reason"] is not None else None),
                 })
             return {
                 "batch_id": batch["batch_id"], "delivery_key": batch["delivery_key"],
@@ -571,6 +576,7 @@ class Store:
         """Append evidence only while this executor owns the active attempt."""
         if not isinstance(stage, str) or not stage or not isinstance(details, dict):
             raise TaskError("INVALID_INPUT", "Event stage and details are required")
+        stage, details = diagnostic_stage(stage), diagnostic_event(stage, details)
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
@@ -578,6 +584,47 @@ class Store:
                 "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, ?, ?, ?)",
                 (job_id, job["attempt_id"], job["status"], stage, self._utc_now(), _canonical_json(details)),
             )
+
+    def record_diagnostic_evidence(self, job_id: str, owner_token: str, stage: str,
+                                   details: dict, *, runtime_dir: Path) -> dict[str, str]:
+        """Link one private artifact to the currently owned job and attempt."""
+        if not isinstance(details, dict):
+            raise TaskError("INVALID_INPUT", "Diagnostic details must be an object")
+        stage = diagnostic_stage(stage)
+        safe_details = diagnostic_event(stage, {key: value for key, value in details.items()
+                                                if key != "evidence_ref"})
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            attempt_id = job["attempt_id"]
+        if not isinstance(attempt_id, str):
+            raise TaskError("INVALID_STATE", "Task has no active attempt")
+        try:
+            reference = write_diagnostic_artifact(runtime_dir, job_id, attempt_id, stage, safe_details)
+        except (OSError, ValueError) as exc:
+            raise TaskError("STORAGE_ERROR", "Cannot write private diagnostic evidence") from exc
+        artifact = Path(runtime_dir) / reference["path"]
+        try:
+            with self.transaction() as connection:
+                self._require_owner(connection, job_id, owner_token)
+                job = self._job_row(connection, job_id)
+                if job["attempt_id"] != attempt_id:
+                    raise TaskError("OWNERSHIP_LOST", "Diagnostic attempt changed before it was linked")
+                previous_evidence = self._decode(job["evidence_json"])
+                evidence = list(previous_evidence) if isinstance(previous_evidence, list) else []
+                evidence.append(reference)
+                now = self._utc_now()
+                connection.execute("UPDATE jobs SET evidence_json = ?, updated_at = ? WHERE job_id = ?",
+                                   (_canonical_json(evidence), now, job_id))
+                connection.execute(
+                    "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (job_id, attempt_id, job["status"], stage, now,
+                     _canonical_json({**safe_details, "evidence_ref": reference})),
+                )
+        except BaseException:
+            artifact.unlink(missing_ok=True)
+            raise
+        return reference
 
     def defer_preparation(self, job_id: str, owner_token: str, max_attempts: int = 2) -> dict:
         """Release an active pre-submit attempt when its scheduled time is future again."""
@@ -618,6 +665,8 @@ class Store:
     def finish_preparation(self, job_id: str, owner_token: str, *, status: str, metadata=None, error=None, warnings=None, pause_reason=None) -> dict:
         if status not in {"READY", "FAILED_PRE_SUBMIT", "BLOCKED", "CANCELLED"}:
             raise TaskError("INVALID_STATE", "Invalid preparation result")
+        error = diagnostic_error(error) if error is not None else None
+        warnings = diagnostic_warnings(warnings)
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
@@ -628,7 +677,7 @@ class Store:
                 """UPDATE jobs SET status = ?, actual_metadata_json = ?, error_json = ?, warnings_json = ?, updated_at = ?
                    WHERE job_id = ?""",
                 (status, _canonical_json(metadata) if metadata is not None else None,
-                 _canonical_json(error) if error is not None else None, _canonical_json(warnings or []), now, job_id),
+                 _canonical_json(error) if error is not None else None, _canonical_json(warnings), now, job_id),
             )
             connection.execute(
                 "UPDATE attempts SET status = ?, finished_at = ? WHERE attempt_id = ?",
@@ -651,15 +700,17 @@ class Store:
             """INSERT INTO accounts (platform, account, status, pause_reason, updated_at) VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(platform, account) DO UPDATE SET status = excluded.status,
                pause_reason = excluded.pause_reason, updated_at = excluded.updated_at""",
-            (platform, account, reason["code"], _canonical_json(reason), self._utc_now()),
+            (platform, account, diagnostic_error(reason)["code"], _canonical_json(diagnostic_error(reason)), self._utc_now()),
         )
 
     def accounts(self) -> list[dict]:
         with self.transaction() as connection:
             rows = connection.execute("SELECT * FROM accounts ORDER BY platform, account").fetchall()
-            return [{**dict(row), "pause_reason": self._decode(row["pause_reason"])} for row in rows]
+            return [{**dict(row), "pause_reason": (diagnostic_error(self._decode(row["pause_reason"]))
+                    if row["pause_reason"] is not None else None)} for row in rows]
 
     def mark_ready(self, job_id: str, owner_token: str, metadata: dict, warnings: list[dict] | None = None) -> dict:
+        warnings = diagnostic_warnings(warnings)
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
@@ -727,6 +778,8 @@ class Store:
             return self._job_from_row(self._job_row(connection, job_id))
 
     def finish_delivery(self, job_id: str, owner_token: str, *, work: dict | None, error=None, warnings=None, pause_reason=None) -> dict:
+        error = diagnostic_error(error) if error is not None else None
+        warnings = diagnostic_warnings(warnings)
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
@@ -734,10 +787,13 @@ class Store:
                 raise TaskError("INVALID_STATE", "Task has not crossed the submission boundary")
             now = self._utc_now()
             status = "COMPLETED" if work is not None else "UNKNOWN_COMMIT"
-            evidence = [] if work is None else [{
-                "kind": work["source"], "content_id": work["content_id"],
-                "account_id": work["account_id"], "created_at": work["created_at"], "observed_at": now,
-            }]
+            previous_evidence = self._decode(job["evidence_json"])
+            evidence = list(previous_evidence) if isinstance(previous_evidence, list) else []
+            if work is not None:
+                evidence.append({
+                    "kind": work["source"], "content_id": work["content_id"],
+                    "account_id": work["account_id"], "created_at": work["created_at"], "observed_at": now,
+                })
             connection.execute(
                 """UPDATE jobs SET status = ?, submission = ?, platform_result = ?, content_id = ?,
                    verified_at = ?, error_json = ?, warnings_json = ?, evidence_json = ?, updated_at = ? WHERE job_id = ?""",

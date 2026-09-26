@@ -105,6 +105,16 @@ class TaskService:
     def accounts(self) -> list[dict]:
         return self.store.accounts()
 
+    def prune_evidence(self, *, retention_days: int = 30) -> int:
+        from orchestrator.diagnostics import prune_private_evidence
+
+        return prune_private_evidence(self.runtime_dir, retention_days=retention_days)
+
+    def capabilities(self) -> list[dict]:
+        from orchestrator.platforms import capability_report
+
+        return capability_report()
+
     def maintenance(self, platform: str, account: str):
         from orchestrator.ownership import AccountLease
 

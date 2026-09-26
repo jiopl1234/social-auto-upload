@@ -378,7 +378,9 @@ def test_unknown_target_survives_restart_and_repeat_without_resubmission(tmp_pat
 
     current = service.batch_status(batch["batch_id"])
     assert [item["status"] for item in current["targets"]] == ["COMPLETED", "UNKNOWN_COMMIT"]
-    assert current["targets"][1]["evidence"] == []
+    # Failure diagnostics are queryable, but are not proof of a remote work.
+    assert all(item["kind"] == "diagnostic" for item in current["targets"][1]["evidence"])
+    assert current["targets"][1]["content_id"] is None
     assert current["status"] == "PARTIAL_FAILURE"
     for media in (tmp_path / "media").iterdir():
         media.unlink()

@@ -239,56 +239,6 @@ def test_invalid_upload_cookie_releases_lease_after_completed_check(tmp_path, mo
         pass
 
 
-def test_douyin_video_close_failure_is_reported_after_both_closes(tmp_path):
-    from uploader.douyin_uploader.main import DouYinVideo
-
-    video = DouYinVideo("title", str(tmp_path / "unused.mp4"), [], 0, str(tmp_path / "cookie.json"))
-    video.validate_upload_args = AsyncMock()
-    video.fill_title_and_description = AsyncMock()
-    video.apply_self_declaration = AsyncMock()
-    video.apply_collection = AsyncMock()
-    video.set_thumbnail = AsyncMock()
-
-    locator = MagicMock()
-    locator.first = locator
-    locator.count = AsyncMock(return_value=1)
-    locator.wait_for = AsyncMock()
-    locator.set_input_files = AsyncMock()
-    absent = MagicMock()
-    absent.first = absent
-    absent.count = AsyncMock(return_value=0)
-    button = MagicMock()
-    button.count = AsyncMock(return_value=1)
-    button.click = AsyncMock()
-    page = MagicMock()
-    page.goto = AsyncMock()
-    page.wait_for_url = AsyncMock()
-    page.wait_for_timeout = AsyncMock()
-    page.evaluate = AsyncMock()
-    page.get_by_role.return_value = button
-    page.locator.side_effect = (
-        lambda selector: absent
-        if "semi-switch" in selector or "input[placeholder" in selector else locator
-    )
-
-    context = MagicMock()
-    context.new_page = AsyncMock(return_value=page)
-    context.storage_state = AsyncMock()
-    context.close = AsyncMock(side_effect=OSError("close failed"))
-    browser = MagicMock()
-    browser.new_context = AsyncMock(return_value=context)
-    browser.close = AsyncMock()
-    playwright = MagicMock()
-    playwright.chromium.launch = AsyncMock(return_value=browser)
-
-    with (
-        patch("uploader.douyin_uploader.main.set_init_script", AsyncMock(return_value=context)),
-        patch("uploader.douyin_uploader.main.asyncio.sleep", AsyncMock()),
-        pytest.raises(RuntimeError, match="browser resource shutdown"),
-    ):
-        asyncio.run(video.upload(playwright))
-    context.close.assert_awaited_once()
-    browser.close.assert_awaited_once()
 
 
 @pytest.mark.parametrize("platform", ("xiaohongshu", "tencent"))

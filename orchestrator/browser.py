@@ -6,14 +6,13 @@ import asyncio
 from importlib.metadata import PackageNotFoundError, version
 import json
 import math
-import os
 from pathlib import Path
 import re
 from typing import Any, Awaitable, Callable, Mapping
-from uuid import uuid4
 
 from orchestrator.accounts import _storage_state_bytes
 from orchestrator.errors import TaskError
+from orchestrator.session_storage import atomic_private_write
 
 
 PATCHRIGHT_PIN = "1.58.2"
@@ -137,18 +136,7 @@ class BrowserSession:
                 if len(payload) > 5_000_000:
                     raise ValueError("Storage state exceeds the managed limit")
                 destination = Path(path)
-                destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-                temporary = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
-                try:
-                    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    with os.fdopen(fd, "wb") as stream:
-                        stream.write(payload)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    _storage_state_bytes(temporary)
-                    os.replace(temporary, destination)
-                finally:
-                    temporary.unlink(missing_ok=True)
+                atomic_private_write(destination, payload, validate=_storage_state_bytes)
             except Exception:
                 # Exception strings can contain cookie values or local paths.
                 raise TaskError("STORAGE_ERROR", "Browser session state could not be saved") from None

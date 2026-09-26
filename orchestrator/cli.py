@@ -24,6 +24,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         actions.add_parser(action).add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
     actions.add_parser("accounts", help="Query account status and pause reasons")
+    actions.add_parser("capabilities", help="Query per-path offline and production verification status")
+    actions.add_parser("prune-evidence", help="Remove managed diagnostic artifacts older than 30 days")
     bind = actions.add_parser("bind-account", help="Bind one local account to a managed session")
     bind.add_argument("--platform", dest="account_platform", required=True)
     bind.add_argument("--account", required=True)
@@ -61,15 +63,30 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = {"jobs": service.list_jobs()}
         elif args.action == "accounts":
             result = {"accounts": service.accounts()}
+        elif args.action == "capabilities":
+            result = {"capabilities": service.capabilities()}
+        elif args.action == "prune-evidence":
+            result = {"removed": service.prune_evidence(), "retention_days": 30}
         elif args.action == "bind-account":
             result = service.bind_account(args.account_platform, args.account, args.expected_id, args.session_source)
         elif args.action == "run":
-            if args.job_id is None:
-                raise TaskError("UNSUPPORTED", "No platform task adapters are connected yet")
-            result = await service.run_once(adapters={}, job_id=args.job_id)
+            from orchestrator.platforms import default_adapters
+
+            selected = service.status(args.job_id) if args.job_id else None
+            paths = service.capabilities()
+            if selected is not None:
+                paths = [item for item in paths if item["platform"] == selected["platform"]
+                         and item["content_type"] == selected["manifest"]["content_type"]]
+            if not paths or not all(item["production_verified"] for item in paths):
+                raise TaskError("UNSUPPORTED", "Live account and work evidence is not verified; inspect jobs capabilities")
+            adapters = default_adapters(service.runtime_dir)
+            result = (await service.run_once(adapters=adapters, job_id=args.job_id) if args.job_id
+                      else {"jobs": await service.run_pending(adapters=adapters)})
         else:
             raise TaskError("INVALID_INPUT", "Unknown task action", field="action")
-        print(json.dumps(result, ensure_ascii=False, allow_nan=False))
+        from orchestrator.diagnostics import sanitize_public_result
+
+        print(json.dumps(sanitize_public_result(result), ensure_ascii=False, allow_nan=False))
         return 0
     except TaskError as exc:
         return emit_error(exc)

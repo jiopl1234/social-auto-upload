@@ -1,0 +1,73 @@
+<!doctype html><meta charset="utf-8"><title>Synthetic creator contract</title>
+<div id="identity"></div><input type="file" id="media" multiple>
+<div id="previews"></div><input id="title"><div id="body" contenteditable="true"></div>
+<input id="tag-search"><div id="topics"></div><div id="tags"></div>
+<input type="file" id="cover"><output id="cover-proof"></output>
+<select id="collection"><option value="">None</option><option>Series A</option></select>
+<div id="declarations"></div><button id="publish">Publish</button><output id="receipt"></output>
+<script id="works-data" type="application/json">[]</script>
+<script>
+const cfg = __FIXTURE_CONFIG__;
+const $ = id => document.getElementById(id);
+$('media').className='upload-btn-input upload-input';
+const uploadWrapper=document.createElement('div'); uploadWrapper.className='upload-content';
+$('media').replaceWith(uploadWrapper); uploadWrapper.append(document.createElement('input'));
+uploadWrapper.firstChild.id='media'; uploadWrapper.firstChild.type='file'; uploadWrapper.firstChild.multiple=true;
+uploadWrapper.firstChild.className='upload-btn-input upload-input';
+uploadWrapper.firstChild.accept='video/mp4';
+$('title').placeholder=cfg.platform==='douyin'?'填写作品标题':cfg.platform==='xiaohongshu'?'填写标题':'填写短标题有机会获得更多流量';
+if(cfg.platform==='xiaohongshu') {const p=document.createElement('p');p.id='body';p.contentEditable='true';p.dataset.placeholder='输入正文描述';$('body').replaceWith(p);}
+else $('body').className=cfg.platform==='douyin'?'zone-container':'input-editor';
+$('publish').textContent=cfg.platform==='tencent'?'发表':'发布';
+$('identity').dataset.accountId = cfg.mode === 'wrong-account' ? 'another-account' : cfg.platform + ':creator';
+function challenge() { const e = document.createElement('div'); e.dataset.challenge='auth'; e.textContent='实名验证 短信验证'; document.body.append(e); }
+if (cfg.mode === 'auth') challenge();
+if (cfg.mode === 'blank') $('identity').removeAttribute('data-account-id');
+if (cfg.mode === 'unknown-dialog') { const d=document.createElement('div'); d.role='dialog'; d.textContent='Unknown safety prompt'; document.body.append(d); }
+const options = {ownership:['original','repost'], ai_usage:['none','assisted','generated'],
+    repost_source:['Example source'], originality_rights:['true','false'], repost_authorized:['true','false']};
+for (const [name, values] of Object.entries(options)) {
+    const s=document.createElement('select'); s.id='decl-'+name; s.dataset.declaration=name;
+    for (const value of ['__unset__', ...values]) s.add(new Option(value,value));
+    if(cfg.mode==='required-declaration' && name==='ai_usage') s.required=true;
+    $('declarations').append(s);
+}
+async function sha(file) { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',await file.arrayBuffer()))).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+$('media').onchange = async () => {
+    $('previews').replaceChildren();
+    for(const [index,file] of Array.from($('media').files).entries()) {
+        const e=document.createElement('article'); e.dataset.name=file.name; e.dataset.kind=cfg.kind==='video'?'video':'image';
+        e.dataset.status='processing'; $('previews').append(e); e.dataset.sha256=await sha(file);
+        e.dataset.status=cfg.mode==='processing' ? 'processing' : cfg.mode==='partial' && index===0 ? 'failed' : 'ready';
+    }
+    if(cfg.mode==='auth-after-upload') challenge();
+};
+$('cover').onchange = async () => { $('cover-proof').textContent=JSON.stringify({kind:'image',sha256:await sha($('cover').files[0])}); };
+$('tag-search').oninput = () => {
+    $('topics').replaceChildren();
+    const tag=$('tag-search').value;
+    for(const text of cfg.mode==='wrong-topic' ? [tag+' extended'] : [tag+' extended',tag]) {
+        const b=document.createElement('button'); b.textContent=text;
+        b.onclick=()=>{const s=document.createElement('span');s.textContent=text;$('tags').append(s);$('tag-search').value='';};
+        $('topics').append(b);
+    }
+};
+$('title').oninput=()=>{if(cfg.mode==='truncated-title') $('title').value='truncated';};
+$('body').oninput=()=>{if(cfg.mode==='auth-after-fields') challenge();};
+function metadata() {
+    return {title:$('title').value,body:$('body').innerText,tags:Array.from($('tags').children).map(e=>e.textContent),
+        media:Array.from($('previews').children).map(e=>({kind:e.dataset.kind,sha256:e.dataset.sha256})),
+        cover:$('cover-proof').textContent?JSON.parse($('cover-proof').textContent):null,collection:$('collection').value||null,
+        declarations:Object.fromEntries(Array.from(document.querySelectorAll('[data-declaration]')).filter(e=>e.value!=='__unset__').map(e=>[e.dataset.declaration,e.value==='true'?true:e.value==='false'?false:e.value]))};
+}
+$('publish').onclick=async()=>{
+    const payload={account_id:$('identity').dataset.accountId,content_type:cfg.kind,metadata:metadata()};
+    try{const response=await fetch('/publish',{method:'POST',body:JSON.stringify(payload)});const r=await response.json();$('receipt').dataset.contentId=r.content_id;}
+    catch(e){} finally{$('receipt').dataset.observed='true';}
+    if(cfg.mode==='false-success') { history.pushState({},'','/success');$('publish').remove(); }
+};
+if(cfg.readonly) {
+    $('publish').remove();
+    fetch('/works').then(r=>r.json()).then(works=>{$('works-data').textContent=JSON.stringify(works);$('works-data').dataset.ready='true';});
+}
+</script>

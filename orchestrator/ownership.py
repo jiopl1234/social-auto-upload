@@ -19,6 +19,7 @@ class AccountLease:
     """OS ownership plus a durable marker for unconfirmed browser shutdown."""
 
     def __init__(self, runtime_dir: Path, platform: str, account: str):
+        self.runtime_dir = Path(runtime_dir)
         # First release has one account per platform. Serializing the platform
         # also prevents two aliases or databases from racing the same account.
         key = hashlib.sha256(platform.encode("utf-8")).hexdigest()

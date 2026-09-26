@@ -496,58 +496,11 @@ class XiaoHongShuBaseUploader(BaseVideoUploader):
         await self.fill_tags(page)
 
     async def check_original_declaration(self, page: Page) -> None:
-        """设置「来源转载」声明，填写转载来源。
+        if not getattr(self, "repost_source", None):
+            return
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        流程（对应 codegen 录制）：
-          点「添加内容类型声明」→ 点包含「来源转载」的 div
-          → 填 placeholder「请输入媒体名称」→ 点 button「确认」。
-        容错：任一步失败记 warning 跳过、继续发布，不中断。
-        """
-        source = getattr(self, "repost_source", "") or ""
-        try:
-            # 1. 点「添加内容类型声明」
-            trigger = page.get_by_text("添加内容类型声明", exact=False).first
-            try:
-                await trigger.scroll_into_view_if_needed(timeout=5000)
-            except Exception:
-                pass
-            await trigger.click(force=True)
-            await page.wait_for_timeout(1500)
-
-            # 2. 选「来源转载」选项
-            import re as _re
-            repost_option = page.locator("#publish-container div").filter(
-                has_text=_re.compile(r"^来源转载$")
-            ).last
-            if await repost_option.count():
-                await repost_option.click(force=True)
-            else:
-                await _js_click_by_text(page, "来源转载")
-            await page.wait_for_timeout(1500)
-
-            # 3. 填写媒体名称
-            source_input = page.get_by_placeholder("请输入媒体名称").first
-            await source_input.wait_for(state="visible", timeout=8000)
-            await source_input.click()
-            await source_input.fill(source)
-            await page.wait_for_timeout(500)
-
-            # 4. 点「确认」按钮
-            confirm = page.get_by_role("button", name="确认").first
-            try:
-                await confirm.wait_for(state="visible", timeout=5000)
-                await confirm.click()
-            except Exception:
-                await _js_click_by_text(page, "确认")
-
-            await page.wait_for_timeout(1000)
-            xiaohongshu_logger.success(_msg("🧾", f"来源转载已声明（来源：{source}）"))
-        except Exception as exc:
-            xiaohongshu_logger.warning(_msg("⚠️", f"设置来源转载失败，跳过继续发布: {exc}"))
-            try:
-                await page.keyboard.press("Escape")
-            except Exception:
-                pass
+        require_task_delivery()
 
 
 class XiaoHongShuVideo(XiaoHongShuBaseUploader):
@@ -650,102 +603,14 @@ class XiaoHongShuVideo(XiaoHongShuBaseUploader):
                 pass
 
     async def upload_video_content(self, page: Page) -> None:
-        xiaohongshu_logger.info(_msg("🏃", f"小人开始搬运视频: {self.title}.mp4"))
-        xiaohongshu_logger.info(_msg("🧭", "小人正在赶往视频发布页"))
-        publish_url = _build_xhs_creator_url(
-            "/publish/publish?from=homepage&target=video"
-        )
-        await page.goto(publish_url)
-        await page.wait_for_url(publish_url)
-        await page.locator("div[class^='upload-content'] input[class='upload-input']").set_input_files(self.file_path)
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        while True:
-            try:
-                upload_input = await page.wait_for_selector('input.upload-input', timeout=3000)
-                preview_new = await upload_input.query_selector(
-                    'xpath=following-sibling::div[contains(@class, "preview-new")]')
-                if preview_new:
-                    # 获取整个预览区域的文本，更鲁棒地判断上传状态
-                    all_text = await preview_new.inner_text()
-                    upload_success = any(keyword in all_text for keyword in ['上传成功', '分辨率', '重新上传', '编辑封面', '已上传', '已选择', '100%'])
-                    
-                    if not upload_success:
-                        # 检查是否有特定的状态码或百分比
-                        stage_elements = await preview_new.query_selector_all('div.stage')
-                        for stage in stage_elements:
-                            text_content = await page.evaluate('(element) => element.textContent', stage)
-                            if '上传成功' in text_content or '分辨率' in text_content:
-                                upload_success = True
-                                break
-                    
-                    if upload_success:
-                        xiaohongshu_logger.success(_msg("🥳", "视频已经传完啦"))
-                        break
-                    
-                    if self.debug:
-                        normalized_text = all_text.strip().replace("\n", " ")
-                        xiaohongshu_logger.debug(_msg("🧍", f"预览区域内容: {normalized_text}"))
-                    xiaohongshu_logger.debug(_msg("🧍", "还没看到上传成功标识，小人继续等一会"))
-                else:
-                    # 尝试检查标题输入框是否已经出现，如果是，说明已经进入编辑状态
-                    title_container = page.locator('input[placeholder*="填写标题"]')
-                    if await title_container.count() > 0 and await title_container.is_visible():
-                        xiaohongshu_logger.success(_msg("🥳", "虽然没看到预览区，但标题框出来了，小人继续"))
-                        break
-                    xiaohongshu_logger.debug(_msg("🧍", "还没拿到预览区域，小人继续等一会"))
-            except Exception as e:
-                xiaohongshu_logger.debug(_msg("😵", f"上传状态还没稳定下来，小人继续观察: {e}"))
-            await asyncio.sleep(2)
-
-        xiaohongshu_logger.info(_msg("✍️", "小人开始填标题、描述和话题"))
-        await self.fill_meta(page)
-
-        await self.set_thumbnail(page, self.thumbnail_path)
-
-        # await self.set_location(page, "青岛市")
-
-        await self.check_original_declaration(page)
-
-        if self.publish_strategy == XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED and self.publish_date != 0:
-            await self.set_schedule_time_xiaohongshu(page, self.publish_date)
-
-        while True:
-            try:
-                if self.publish_strategy == XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED:
-                    await page.locator('button:has-text("定时发布")').click()
-                else:
-                    await page.locator('button:has-text("发布")').click()
-                await page.wait_for_url(
-                    XHS_PUBLISH_SUCCESS_URL_PATTERN,
-                    timeout=3000
-                )
-                xiaohongshu_logger.success(_msg("🥳", "视频发布成功，小人开心收工"))
-                break
-            except Exception:
-                xiaohongshu_logger.info(_msg("🏃", "小人正在冲刺发布视频"))
-                if self.debug:
-                    await page.screenshot(full_page=True)
-                await asyncio.sleep(0.5)
+        require_task_delivery()
 
     async def upload(self, playwright: Playwright) -> None:
-        xiaohongshu_logger.info(_msg("🧍", "小人先检查 cookie、视频文件、封面和发布时间"))
-        await self.validate_upload_args()
-        xiaohongshu_logger.info(_msg("🥳", "上传前检查通过"))
-        browser = await playwright.chromium.launch(headless=self.headless, channel="chromium")
-        context = await browser.new_context(
-            permissions=["geolocation"],
-            storage_state=self.account_file,
-        )
-        context = await set_init_script(context)
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        try:
-            page = await context.new_page()
-            await self.upload_video_content(page)
-            await context.storage_state(path=self.account_file)
-            xiaohongshu_logger.success(_msg("🥳", "cookie 更新完毕"))
-        finally:
-            await context.close()
-            await browser.close()
+        require_task_delivery()
 
     async def xiaohongshu_upload_video(self):
         async with async_playwright() as playwright:

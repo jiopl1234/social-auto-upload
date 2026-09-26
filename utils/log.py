@@ -1,17 +1,20 @@
 import sys
 from pathlib import Path
+from typing import Any
 from loguru import logger
 
 from conf import BASE_DIR
 
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-if hasattr(sys.stderr, "reconfigure"):
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+stdout_reconfigure = getattr(sys.stdout, "reconfigure", None)
+stderr_reconfigure = getattr(sys.stderr, "reconfigure", None)
+if callable(stdout_reconfigure):
+    stdout_reconfigure(encoding="utf-8", errors="replace")
+if callable(stderr_reconfigure):
+    stderr_reconfigure(encoding="utf-8", errors="replace")
 
 
-def log_formatter(record: dict) -> str:
+def log_formatter(record: Any) -> str:
     """
     Formatter for log records.
     :param dict record: Log object containing log metadata & message.
@@ -29,6 +32,14 @@ def log_formatter(record: dict) -> str:
     return f"<fg #70acde>{{time:YYYY-MM-DD HH:mm:ss}}</fg #70acde> | <fg {color}>{{level}}</fg {color}>: <light-white>{{message}}</light-white>\n"
 
 
+def _safe_record(record: Any) -> None:
+    # Legacy uploaders can log page text, URLs, cookies, or exception objects.
+    # Their arbitrary prose is not a safe diagnostic interface. The task store
+    # carries structured, allowlisted evidence for investigation instead.
+    record["message"] = "Application event"
+    record["exception"] = None
+
+
 def create_logger(log_name: str, file_path: str):
     """
     Create custom logger for different business modules.
@@ -40,14 +51,15 @@ def create_logger(log_name: str, file_path: str):
         return record["extra"].get("business_name") == log_name
 
     Path(BASE_DIR / file_path).parent.mkdir(exist_ok=True)
-    logger.add(Path(BASE_DIR / file_path), filter=filter_record, level="INFO", rotation="10 MB", retention="10 days", backtrace=True, diagnose=True)
+    logger.add(Path(BASE_DIR / file_path), filter=filter_record, level="INFO", rotation="10 MB", retention="10 days", backtrace=False, diagnose=False)
     return logger.bind(business_name=log_name)
 
 
 # Remove all existing handlers
 logger.remove()
+logger.configure(patcher=_safe_record)
 # Add a standard console handler
-logger.add(sys.stdout, colorize=True, format=log_formatter)
+logger.add(sys.stderr, colorize=True, format=log_formatter, backtrace=False, diagnose=False)
 
 douyin_logger = create_logger('douyin', 'logs/douyin.log')
 tencent_logger = create_logger('tencent', 'logs/tencent.log')

@@ -162,6 +162,17 @@ def test_machine_help_is_also_one_json_value(tmp_path):
     assert not db.exists()
 
 
+def test_capability_and_evidence_maintenance_are_machine_readable(tmp_path):
+    db = tmp_path / "jobs.sqlite3"
+    completed, result = run_jobs(db, "capabilities")
+    assert completed.returncode == 0
+    assert len(result["capabilities"]) == 5
+    assert all(item["production_verified"] is False for item in result["capabilities"])
+    completed, pruned = run_jobs(db, "prune-evidence")
+    assert completed.returncode == 0
+    assert pruned == {"removed": 0, "retention_days": 30}
+
+
 def test_account_pause_reason_is_queryable_from_machine_cli(tmp_path):
     from orchestrator.service import TaskService
 

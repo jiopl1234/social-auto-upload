@@ -68,46 +68,16 @@ class DouyinDeclarationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "自主声明"):
             asyncio.run(video.apply_self_declaration(object()))
 
-    def test_declaration_failure_closes_browser_resources(self):
-        video = DouYinVideo(
-            "标题", "/tmp/demo.mp4", [], 0, "/tmp/cookie.json",
-            declaration="已确认声明原文",
-        )
-        video.validate_upload_args = AsyncMock()
-        video.fill_title_and_description = AsyncMock()
-        video.set_thumbnail = AsyncMock()
-        video.apply_self_declaration = AsyncMock(side_effect=RuntimeError("抖音自主声明设置失败"))
+    def test_legacy_video_requires_manifest_before_creating_browser(self):
+        from orchestrator.errors import TaskError
 
-        locator = MagicMock()
-        locator.set_input_files = AsyncMock()
-        locator.count = AsyncMock(return_value=1)
-        locator.wait_for = AsyncMock()
-        locator.first = locator
-        page = MagicMock()
-        page.goto = AsyncMock()
-        page.wait_for_url = AsyncMock()
-        page.wait_for_selector = AsyncMock()
-        page.wait_for_timeout = AsyncMock()
-        page.locator.return_value = locator
-
-        context = MagicMock()
-        context.new_page = AsyncMock(return_value=page)
-        context.close = AsyncMock(side_effect=OSError("close failed"))
-        browser = MagicMock()
-        browser.new_context = AsyncMock(return_value=context)
-        browser.close = AsyncMock()
+        video = DouYinVideo("标题", "/tmp/demo.mp4", [], 0, "/tmp/cookie.json", declaration="已确认声明原文")
         playwright = MagicMock()
-        playwright.chromium.launch = AsyncMock(return_value=browser)
-
-        with (
-            patch.object(douyin_main, "set_init_script", AsyncMock(return_value=context)),
-            patch.object(douyin_main.asyncio, "sleep", AsyncMock()),
-            self.assertRaisesRegex(RuntimeError, "自主声明"),
-        ):
+        playwright.chromium.launch = AsyncMock()
+        with self.assertRaises(TaskError) as error:
             asyncio.run(video.upload(playwright))
-
-        context.close.assert_awaited_once()
-        browser.close.assert_awaited_once()
+        self.assertEqual(error.exception.code, "UNSUPPORTED")
+        playwright.chromium.launch.assert_not_awaited()
 
 
 if __name__ == "__main__":

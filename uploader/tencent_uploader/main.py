@@ -557,25 +557,12 @@ class TencentBaseUploader(BaseVideoUploader):
         timeout_seconds: float = 10 * 60,
         poll_interval_seconds: float = 2,
     ) -> Path | None:
-        dialog = page.locator("div.weui-desktop-dialog__wrp:visible").filter(has_text="实名验证").first
-        if not await dialog.count() or not await dialog.is_visible():
-            return None
+        from orchestrator.errors import TaskError
 
-        output_path = Path(qr_path) if qr_path else Path(self.account_file).with_name(
-            f"{Path(self.account_file).stem}_verification_qr.png"
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        await dialog.screenshot(path=str(output_path))
-        tencent_logger.warning(_msg("📱", f"需要管理员微信扫码完成实名验证: {output_path}"))
-
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-        while await dialog.count() and await dialog.is_visible():
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("等待视频号管理员实名验证超时")
-            await asyncio.sleep(poll_interval_seconds)
-
-        tencent_logger.success(_msg("🥳", "管理员实名验证已完成，继续发表"))
-        return output_path
+        dialog = page.locator("div.weui-desktop-dialog__wrp:visible").filter(has_text="实名验证")
+        if await dialog.count():
+            raise TaskError("AUTH_REQUIRED", "Account verification is required")
+        return None
 
     async def set_schedule_time_tencent(self, page: Page, publish_date: datetime):
         label_element = page.locator("label").filter(has_text="定时").nth(1)
@@ -820,21 +807,11 @@ class TencentBaseUploader(BaseVideoUploader):
         # 视频号「视频标注」下拉：本项目成片经 AI 处理（TTS 配音、AI 字幕、AI 前贴片），
         # 依平台合规要求如实选「含AI生成内容」（与「内容为转载」等并列，选定即可、无需填写来源）。
         # 注意：这与上方独立的「声明原创」复选框是两个不同字段，本项目走 AI 标注、不勾原创声明。
-        label_text = getattr(self, "content_label", None) or "含AI生成内容"
-        try:
-            entry = page.get_by_text("选择视频标注", exact=True).first
-            if not await entry.count():
-                tencent_logger.info(_msg("🧾", "当前页面未发现「视频标注」入口，跳过标注继续发布"))
-                return
-            await entry.click()
-            await page.wait_for_timeout(800)
-            option = page.get_by_text(label_text, exact=True).first
-            await option.wait_for(state="visible", timeout=5000)
-            await option.click()
-            await page.wait_for_timeout(500)
-            tencent_logger.success(_msg("🏷️", f"视频标注已选择：{label_text}"))
-        except Exception as exc:
-            tencent_logger.warning(_msg("😵", f"设置视频标注「{label_text}」失败，跳过继续发布：{exc}"))
+        if not getattr(self, "content_label", None):
+            return
+        from orchestrator.platforms.legacy import require_task_delivery
+
+        require_task_delivery()
 
     async def wait_for_upload_complete(
         self, page: Page, timeout_seconds: int = 3600, max_retries: int = 3
@@ -909,61 +886,9 @@ class TencentBaseUploader(BaseVideoUploader):
                 await asyncio.sleep(2)
 
     async def submit_publish(self, page: Page) -> None:
-        is_draft = getattr(self, "is_draft", False)
-        # 先等待并清理遮罩/弹窗,再等发表按钮出现
-        for wait_round in range(60):
-            await self._dismiss_switch_account_dialog(page)
-            try:
-                await page.evaluate("""() => document.querySelectorAll('.mask, .changeAccount-dialog, .common-dialog').forEach(e => e.remove())""")
-            except Exception:
-                pass
-            publish_btn = page.get_by_role("button", name="发表", exact=True).first if not is_draft else page.get_by_role("button", name="保存草稿").first
-            try:
-                if await publish_btn.count() and await publish_btn.is_visible():
-                    break
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-        else:
-            tencent_logger.warning(_msg("😵", "60s 内未找到可见的发表/草稿按钮，尝试强制继续"))
-        # 点发表/草稿
-        for attempt in range(20):
-            try:
-                if await publish_btn.count():
-                    try:
-                        await publish_btn.click(timeout=4000)
-                    except Exception:
-                        await publish_btn.evaluate("el => el.click()")
-                if is_draft:
-                    await page.wait_for_url("**/post/list**", timeout=5000)
-                    tencent_logger.success(_msg("🥳", "视频草稿保存成功"))
-                else:
-                    # 发表成功后视频号可能跳 /platform（首页）、/post/list 或留在 create 页但按钮消失。
-                    # 综合判断：URL 离开 /post/create 或 发表按钮不再存在。
-                    for _ in range(10):
-                        await asyncio.sleep(1)
-                        cur = page.url
-                        if "/post/create" not in cur:
-                            tencent_logger.success(_msg("🥳", "视频发布成功"))
-                            return
-                        if not await publish_btn.count():
-                            tencent_logger.success(_msg("🥳", "视频发布成功（按钮已消失）"))
-                            return
-                    raise Exception("发表后 10s 页面未变化")
-                return
-            except Exception as exc:
-                current_url = page.url
-                if is_draft and ("post/list" in current_url or "draft" in current_url):
-                    tencent_logger.success(_msg("🥳", "视频草稿保存成功"))
-                    return
-                if (not is_draft) and "/post/create" not in current_url:
-                    tencent_logger.success(_msg("🥳", "视频发布成功"))
-                    return
-                if attempt and attempt % 5 == 0:
-                    tencent_logger.warning(_msg("😵", f"发布仍未完成(第{attempt}次)，异常: {str(exc)[:60]}"))
-                tencent_logger.info(_msg("🏃", "视频正在发布中..."))
-                await asyncio.sleep(1)
-        raise RuntimeError("发布未在预期时间内完成，请检查发布页面")
+        from orchestrator.platforms.legacy import require_task_delivery
+
+        require_task_delivery()
 
 
 class TencentVideo(TencentBaseUploader):
@@ -1133,37 +1058,9 @@ class TencentVideo(TencentBaseUploader):
         # 改到 wait_for_upload_complete 之后再选，见 upload()。
 
     async def upload(self, playwright: Playwright) -> None:
-        tencent_logger.info(_msg("🧍", "小人先检查 cookie、视频文件和发布时间"))
-        await self.validate_upload_args()
-        tencent_logger.info(_msg("🥳", "上传前检查通过"))
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        browser = await playwright.chromium.launch(**_build_launch_kwargs(headless=self.headless))
-        context = await browser.new_context(storage_state=self.account_file)
-
-        try:
-            page = await context.new_page()
-            await self.open_upload_page(page)
-            tencent_logger.info(_msg("🏃", f"小人开始搬运视频: {self.title}"))
-
-            await self.upload_video_file(page, self.file_path)
-            await self.prepare_video_for_publish(page)
-            await self.wait_for_upload_complete(page)
-            # 上传完成、表单稳定后再选合集（否则上传中选的会被重置）
-            await self.apply_collection(page)
-            await self.apply_original_statement(page)
-            await self.set_thumbnail(page)
-
-            if self.publish_strategy == TENCENT_PUBLISH_STRATEGY_SCHEDULED and self.publish_date != 0:
-                await self.set_schedule_time_tencent(page, self.publish_date)
-
-            await self.set_short_title(page, self.title, self.short_title)
-            await self.submit_publish(page)
-
-            await context.storage_state(path=self.account_file)
-            tencent_logger.success(_msg("🥳", "cookie 更新完毕"))
-        finally:
-            await context.close()
-            await browser.close()
+        require_task_delivery()
 
     async def tencent_upload_video(self):
         async with async_playwright() as playwright:

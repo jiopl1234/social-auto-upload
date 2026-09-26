@@ -1,6 +1,6 @@
 # 持久发布任务
 
-任务接口使用独立的 SQLite 数据库保存交付意图和事件。当前已实现账号绑定、不可变清单预检、串行执行、提交边界和只读恢复；平台适配器会随 tracker 的后续任务接入。`QUEUED` 只表示已保存，不表示已发布。
+任务接口使用独立的 SQLite 数据库保存交付意图和事件。当前已实现账号绑定、不可变清单预检、串行执行、提交边界和只读恢复，以及三条视频路径的本地页面适配。真实平台身份与作品证据仍未验证，生产执行保持受限。`QUEUED` 只表示已保存，不表示已发布。
 
 ## 命令
 
@@ -14,9 +14,17 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json events <job_id>
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json attempts <job_id>
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json list
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
+sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json capabilities
+sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json prune-evidence
 ```
 
 省略 `--db` 时使用当前用户的 `~/.sau/tasks.sqlite3`。命令选项 `--db`、`--media-root`、`--json` 放在动作名称前。媒体根目录由本地调用者明确选择，可重复指定；清单不能自己扩大这个范围。绑定操作复制有效 storage-state JSON 到隔离的受管会话路径，不执行登录，也不把配置的 ID 当作在线身份已核实。
+
+`capabilities` 逐路径列出生产验证状态和缺失证据。当前五条路径均 `restricted`；`run` 在启动浏览器或领取任务前返回 `UNSUPPORTED`，没有绕过验证的环境变量或开关。Python 集成可以显式提供本地页面适配器，在合成场景验证完整交付协议。
+
+旧视频发布调用现返回明确迁移错误，需改用绑定账号和包含事实/声明的任务清单。旧命令参数解析与位置参数绑定保持，但它们缺少可靠发布所需的信息，不能静默推断后继续发表。抖音/小红书图文的旧流程迁移由后续图文票处理。
+
+托管会话与诊断证据使用本机用户独占权限（Windows 为原生受保护 DACL），会话验证后原子替换。诊断按 job/attempt/UUID 独立保存，状态和事件记录相对引用；错误和运行版本使用白名单，正文与实际内容不改写。不会保存原始页面截图、Cookie、验证码或登录 QR。`prune-evidence` 显式清理超过 30 天的托管诊断文件；需由本机维护流程定期调用，未自动安装定时任务。清理不影响会话或 SQLite 交付记录，过期引用仍可留作审计。
 
 ## 清单与重复投递
 

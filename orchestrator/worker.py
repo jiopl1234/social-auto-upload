@@ -58,8 +58,10 @@ class ExecutionContext:
 
     def record_runtime(self, details: Mapping[str, Any]) -> None:
         self.assert_owner()
-        self.store.record_event(self.job_id, self.lease.token, "runtime",
-                                {**details, "execution_limits": dict(self.budget.limits)})
+        self.store.record_diagnostic_evidence(
+            self.job_id, self.lease.token, "runtime",
+            {**details, "execution_limits": dict(self.budget.limits)}, runtime_dir=self.lease.runtime_dir,
+        )
 
 
 class PreparationAdapter(Protocol):
@@ -246,6 +248,17 @@ async def run_once(
                 context.assert_owner()
                 if error and error.code == "OWNERSHIP_LOST":
                     raise error
+                if error is not None or warnings:
+                    try:
+                        store.record_diagnostic_evidence(
+                            job["job_id"], lease.token, "diagnostic",
+                            {"error": error.as_dict() if error else None, "warnings": warnings},
+                            runtime_dir=runtime_dir,
+                        )
+                    except TaskError as evidence_error:
+                        if evidence_error.code != "STORAGE_ERROR":
+                            raise
+                        warnings.append(TaskError("STORAGE_ERROR", "Diagnostic evidence could not be saved").as_dict())
                 pause_reason = next((item for item in ([error.as_dict()] if error else []) + warnings
                                      if item["code"] in PAUSE_CODES), None)
                 if submitted:

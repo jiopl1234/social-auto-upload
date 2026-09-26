@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import re
 from typing import NoReturn
-from uuid import uuid4
 
 from orchestrator.errors import TaskError
 from orchestrator.ownership import AccountLease
+from orchestrator.session_storage import atomic_private_write
 from orchestrator.store import Store, _utc_now
 
 
@@ -74,19 +73,9 @@ def _storage_state_bytes(source: Path | str) -> bytes:
 
 def _install_session(path: Path, data: bytes) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temporary = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
-        try:
-            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as stream:
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
-    except OSError as exc:
-        raise TaskError("STORAGE_ERROR", "Cannot install the managed account session") from exc
+        atomic_private_write(path, data, validate=_storage_state_bytes)
+    except (OSError, ValueError, TaskError):
+        raise TaskError("STORAGE_ERROR", "Cannot install the managed account session") from None
 
 
 def bind_account(

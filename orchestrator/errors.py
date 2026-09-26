@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from orchestrator.diagnostics import diagnostic_error
+
 
 class TaskError(Exception):
     """A public task failure with a stable category and optional input field."""
@@ -13,7 +15,7 @@ class TaskError(Exception):
         self.field = field
 
     def as_dict(self) -> dict:
-        return {"code": self.code, "message": self.message, "field": self.field}
+        return diagnostic_error({"code": self.code, "message": self.message, "field": self.field})
 
 
 class ResourceCleanupError(TaskError):
