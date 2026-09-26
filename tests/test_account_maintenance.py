@@ -326,6 +326,7 @@ def test_nested_login_cleanup_controls_public_lease(
 
     inner_context = MagicMock()
     inner_context.new_page = AsyncMock(side_effect=RuntimeError("controlled cookie check failure"))
+    inner_context.close = AsyncMock()
     inner_browser = MagicMock()
     inner_browser.new_context = AsyncMock(return_value=inner_context)
     inner_browser.close = AsyncMock(
@@ -369,6 +370,7 @@ def test_nested_login_cleanup_controls_public_lease(
 
     outer_context.close.assert_awaited_once()
     outer_browser.close.assert_awaited_once()
+    inner_context.close.assert_awaited_once()
     inner_browser.close.assert_awaited_once()
 
     lease = AccountLease(runtime, platform, "creator")
@@ -385,3 +387,137 @@ def test_nested_login_cleanup_controls_public_lease(
         assert marker["resources_started"] is False
         with AccountLease(runtime, platform, "another alias"):
             pass
+
+
+@pytest.mark.parametrize("platform", ("xiaohongshu", "tencent"))
+@pytest.mark.parametrize("operation", ("login", "check"))
+def test_account_browser_closes_when_context_creation_fails(tmp_path, monkeypatch, platform, operation):
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
+    (tmp_path / "legacy").mkdir()
+    monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
+    module = import_module(f"uploader.{platform}_uploader.main")
+    if operation == "check":
+        sau_cli.resolve_account_file(platform, "creator").write_text("session", encoding="utf-8")
+    account_operation = (
+        sau_cli.login_xiaohongshu_account if platform == "xiaohongshu" else sau_cli.login_tencent_account
+    ) if operation == "login" else (
+        sau_cli.check_xiaohongshu_account if platform == "xiaohongshu" else sau_cli.check_tencent_account
+    )
+
+    browser = MagicMock()
+    browser.new_context = AsyncMock(side_effect=RuntimeError("context unavailable"))
+    browser.close = AsyncMock()
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+
+    class PlaywrightContext:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *_args):
+            return False
+
+    with patch.object(module, "async_playwright", side_effect=PlaywrightContext):
+        result = asyncio.run(account_operation("creator"))
+
+    if operation == "login":
+        assert isinstance(result, dict)
+        assert result["success"] is False
+    else:
+        assert result is False
+    browser.close.assert_awaited_once()
+    marker = json.loads(AccountLease(runtime, platform, "creator").path.read_text(encoding="utf-8"))
+    assert marker["active"] is False
+    assert marker["resources_started"] is False
+
+
+@pytest.mark.parametrize("platform", ("xiaohongshu", "tencent"))
+def test_cookie_check_reports_context_close_failure_and_closes_browser(tmp_path, monkeypatch, platform):
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
+    (tmp_path / "legacy").mkdir()
+    monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
+    account_file = sau_cli.resolve_account_file(platform, "creator")
+    account_file.write_text("session", encoding="utf-8")
+    module = import_module(f"uploader.{platform}_uploader.main")
+    check = sau_cli.check_xiaohongshu_account if platform == "xiaohongshu" else sau_cli.check_tencent_account
+
+    page = MagicMock()
+    page.url = "https://example.invalid/creator"
+    page.goto = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.wait_for_url = AsyncMock(side_effect=TimeoutError())
+    page.frames = []
+    page.locator.return_value.first.count = AsyncMock(return_value=0)
+    context = MagicMock()
+    context.new_page = AsyncMock(return_value=page)
+    context.close = AsyncMock(side_effect=OSError("context close failed"))
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    browser.close = AsyncMock()
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+
+    class PlaywrightContext:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *_args):
+            return False
+
+    with (
+        patch.object(module, "async_playwright", side_effect=PlaywrightContext),
+        patch.object(module, "set_init_script", new=AsyncMock(return_value=context)),
+        pytest.raises(ResourceCleanupError) as caught,
+    ):
+        asyncio.run(check("creator"))
+
+    assert caught.value.stage == "COOKIE_CHECK"
+    context.close.assert_awaited_once()
+    browser.close.assert_awaited_once()
+    marker = json.loads(AccountLease(runtime, platform, "creator").path.read_text(encoding="utf-8"))
+    assert marker["active"] is True
+    assert marker["resources_started"] is True
+
+
+@pytest.mark.parametrize("platform", ("xiaohongshu", "tencent"))
+def test_cookie_check_preserves_cancellation_while_attempting_all_closes(tmp_path, monkeypatch, platform):
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
+    (tmp_path / "legacy").mkdir()
+    monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
+    sau_cli.resolve_account_file(platform, "creator").write_text("session", encoding="utf-8")
+    module = import_module(f"uploader.{platform}_uploader.main")
+    check = sau_cli.check_xiaohongshu_account if platform == "xiaohongshu" else sau_cli.check_tencent_account
+
+    page = MagicMock()
+    page.goto = AsyncMock(side_effect=asyncio.CancelledError())
+    context = MagicMock()
+    context.new_page = AsyncMock(return_value=page)
+    context.close = AsyncMock(side_effect=OSError("context close failed"))
+    browser = MagicMock()
+    browser.new_context = AsyncMock(return_value=context)
+    browser.close = AsyncMock(side_effect=OSError("browser close failed"))
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+
+    class PlaywrightContext:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *_args):
+            return False
+
+    with (
+        patch.object(module, "async_playwright", side_effect=PlaywrightContext),
+        patch.object(module, "set_init_script", new=AsyncMock(return_value=context)),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        asyncio.run(check("creator"))
+
+    context.close.assert_awaited_once()
+    browser.close.assert_awaited_once()
+    marker = json.loads(AccountLease(runtime, platform, "creator").path.read_text(encoding="utf-8"))
+    assert marker["active"] is True
+    assert marker["resources_started"] is True

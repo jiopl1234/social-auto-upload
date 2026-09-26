@@ -13,6 +13,7 @@ from patchright.async_api import async_playwright
 
 from conf import DEBUG_MODE, LOCAL_CHROME_HEADLESS, LOCAL_CHROME_PATH
 from orchestrator.errors import ResourceCleanupError
+from orchestrator.legacy_resources import close_browser_resources
 from uploader.base_video import BaseVideoUploader
 from utils.base_social_media import set_init_script
 from utils.login_qrcode import build_login_qrcode_path
@@ -184,6 +185,8 @@ async def cookie_auth(account_file):
             browser = await playwright.chromium.launch(headless=True, executable_path=LOCAL_CHROME_PATH)
         else:
             browser = await playwright.chromium.launch(headless=True, channel="chromium")
+        context = None
+        primary_error: BaseException | None = None
         try:
             context = await browser.new_context(storage_state=account_file)
             context = await set_init_script(context)
@@ -210,14 +213,17 @@ async def cookie_auth(account_file):
 
             xiaohongshu_logger.success(_msg("🥳", "cookie 有效"))
             return True
+        except ResourceCleanupError as exc:
+            primary_error = exc
+            raise
         except Exception as exc:
             xiaohongshu_logger.warning(_msg("😵", f"cookie 校验时出错，按失效处理: {exc}"))
             return False
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            try:
-                await browser.close()
-            except Exception:
-                raise ResourceCleanupError("COOKIE_CHECK") from None
+            await close_browser_resources(context, browser, stage="COOKIE_CHECK", primary_error=primary_error)
 
 
 async def xiaohongshu_setup(
@@ -258,13 +264,14 @@ async def xiaohongshu_cookie_gen(
 
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=headless, channel="chromium")
-        context = await browser.new_context()
-        context = await set_init_script(context)
+        context = None
         qrcode_path = None
         qrcode_info = None
         result = _build_login_result(False, "failed", "小红书登录失败", account_file)
         primary_error: BaseException | None = None
         try:
+            context = await browser.new_context()
+            context = await set_init_script(context)
             page = await context.new_page()
             await page.goto(_build_xhs_creator_url("/login"))
             qrcode_info = await _save_xhs_qrcode(page, account_file, qrcode_callback=qrcode_callback)
@@ -322,16 +329,9 @@ async def xiaohongshu_cookie_gen(
                     xiaohongshu_logger.error(_msg("😢", f"登录失败: {result['message']}"))
             except BaseException as exc:
                 cleanup_error = exc
-            for resource in (context, browser):
-                try:
-                    await resource.close()
-                except BaseException as exc:
-                    if cleanup_error is None:
-                        cleanup_error = exc
-            if cleanup_error is not None and primary_error is None:
-                if not isinstance(cleanup_error, Exception):
-                    raise cleanup_error
-                raise ResourceCleanupError("LOGIN") from None
+            await close_browser_resources(
+                context, browser, stage="LOGIN", primary_error=primary_error, prior_error=cleanup_error,
+            )
         return result
 
 

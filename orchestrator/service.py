@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from orchestrator.errors import TaskError
 from orchestrator.store import Store
@@ -11,14 +12,20 @@ class TaskService:
     """Public task interface shared by the CLI and local integrations."""
 
     def __init__(self, database: str | Path, *, runtime_dir: Path | None = None,
-                 media_roots: list[Path] | tuple[Path, ...] | None = None):
+                 media_roots: list[Path] | tuple[Path, ...] | None = None,
+                 clock: Callable[[], datetime] | None = None):
         from orchestrator.ownership import default_runtime_dir
 
-        self.store = Store(database)
+        self.clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
+        self.store = Store(database, clock=self.clock)
         self.runtime_dir = runtime_dir if runtime_dir is not None else default_runtime_dir()
         self.media_roots = tuple(Path(root).resolve() for root in (media_roots or ()))
 
     def enqueue(self, manifest: dict[str, Any]) -> dict:
+        return self.store.enqueue(self.normalize_input(manifest))
+
+    def normalize_input(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        """Validate one intake request and return its durable normalized snapshot."""
         from orchestrator.accounts import get_binding
         from orchestrator.manifest import normalize_manifest
 
@@ -37,8 +44,7 @@ class TaskService:
         if manifest["platform"] == "tencent" and manifest["content_type"] != "video":
             raise TaskError("UNSUPPORTED", "Tencent tasks support video only", field="content_type")
         binding = get_binding(self.store, self.runtime_dir, manifest["platform"], manifest["account"])
-        normalized = normalize_manifest(manifest, self.media_roots, binding["expected_id"])
-        return self.store.enqueue(normalized)
+        return normalize_manifest(manifest, self.media_roots, binding["expected_id"])
 
     def bind_account(self, platform: str, account: str, expected_id: str, session_source: Path | str) -> dict:
         from orchestrator.accounts import bind_account
@@ -60,21 +66,27 @@ class TaskService:
     def preflight(self, job: dict) -> Any:
         from orchestrator.accounts import get_binding
         from orchestrator.manifest import preflight_manifest
+        from orchestrator.scheduling import is_due
 
         manifest = job["manifest"]
+        if not is_due(manifest, self.clock()):
+            raise TaskError("NOT_DUE", "Scheduled local start time has not arrived", field="run_at")
         binding = get_binding(self.store, self.runtime_dir, job["platform"], job["account"])
         return preflight_manifest(manifest, self.media_roots, binding["expected_id"])
 
-    async def run_once(self, *, adapters, job_id: str | None = None, max_attempts: int = 2) -> dict | None:
+    async def run_once(self, *, adapters, job_id: str | None = None, max_attempts: int = 2,
+                       limits: dict[str, float] | None = None) -> dict | None:
         from orchestrator.worker import run_once
 
         return await run_once(self.store, self.runtime_dir, adapters, job_id,
-                              preflight=self.preflight, max_attempts=max_attempts)
+                              preflight=self.preflight, max_attempts=max_attempts,
+                              limits=limits, wall_clock=self.clock)
 
-    async def run_pending(self, *, adapters, max_attempts: int = 2) -> list[dict]:
+    async def run_pending(self, *, adapters, max_attempts: int = 2,
+                          limits: dict[str, float] | None = None) -> list[dict]:
         completed = []
         while True:
-            result = await self.run_once(adapters=adapters, max_attempts=max_attempts)
+            result = await self.run_once(adapters=adapters, max_attempts=max_attempts, limits=limits)
             if result is None:
                 return completed
             completed.append(result)
@@ -86,3 +98,13 @@ class TaskService:
         from orchestrator.ownership import AccountLease
 
         return AccountLease(self.runtime_dir, platform, account)
+
+    def enqueue_batch(self, payload: dict[str, Any]) -> dict:
+        from orchestrator.fanout import enqueue_batch
+
+        return enqueue_batch(self, payload)
+
+    def batch_status(self, batch_id: str) -> dict:
+        from orchestrator.fanout import batch_status
+
+        return batch_status(self, batch_id)

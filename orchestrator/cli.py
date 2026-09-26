@@ -17,6 +17,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     actions = parser.add_subparsers(dest="action", required=True)
     enqueue = actions.add_parser("enqueue", help="Persist one delivery without publishing")
     enqueue.add_argument("--manifest", type=Path, required=True)
+    enqueue_batch = actions.add_parser("enqueue-batch", help="Persist one delivery for multiple targets")
+    enqueue_batch.add_argument("--manifest", type=Path, required=True)
+    actions.add_parser("batch-status", help="Query every target in a batch").add_argument("batch_id")
     for action in ("status", "events", "attempts"):
         actions.add_parser(action).add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
@@ -40,12 +43,14 @@ async def dispatch(args: argparse.Namespace) -> int:
 
     try:
         service = TaskService(args.db, runtime_dir=args.runtime_dir, media_roots=args.media_root)
-        if args.action == "enqueue":
+        if args.action in {"enqueue", "enqueue-batch"}:
             try:
                 manifest = json.loads(args.manifest.read_text(encoding="utf-8-sig"))
             except (OSError, UnicodeError, ValueError) as exc:
                 raise TaskError("INVALID_INPUT", "Cannot read a valid JSON manifest", field="manifest") from exc
-            result = service.enqueue(manifest)
+            result = service.enqueue(manifest) if args.action == "enqueue" else service.enqueue_batch(manifest)
+        elif args.action == "batch-status":
+            result = service.batch_status(args.batch_id)
         elif args.action == "status":
             result = service.status(args.job_id)
         elif args.action == "events":

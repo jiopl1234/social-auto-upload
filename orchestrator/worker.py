@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, cast
+from typing import Any, Awaitable, Callable, Mapping, Protocol, TypeVar, cast
 
 from orchestrator.delivery import match_work
 from orchestrator.errors import TaskError
 from orchestrator.manifest import freeze_manifest
 from orchestrator.metadata import validate_prepared
 from orchestrator.ownership import AccountLease
+from orchestrator.runtime import ExecutionBudget, validate_limits
+from orchestrator.scheduling import is_due
 from orchestrator.store import Store
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -20,6 +26,7 @@ class ExecutionContext:
     manifest: Mapping[str, Any]
     store: Store
     lease: AccountLease
+    budget: ExecutionBudget = field(default_factory=lambda: ExecutionBudget(validate_limits(None)))
 
     def assert_owner(self) -> None:
         self.lease.assert_owner()
@@ -33,6 +40,26 @@ class ExecutionContext:
 
     def resources_closed(self) -> None:
         self.lease.resources_closed()
+
+    async def run_stage(self, stage: str, operation: Callable[[], Awaitable[T]]) -> T:
+        if stage != "cleanup":
+            self.assert_owner()
+        try:
+            return await self.budget.run(stage, operation)
+        except Exception as exc:
+            # The pinned driver's private exception is not exported by its
+            # public API. Match its exact type identity without logging text.
+            if type(exc).__module__ == "patchright._impl._errors" and type(exc).__name__ == "TargetClosedError":
+                raise TaskError("PAGE_CLOSED", "Browser page or context was closed", field=stage) from None
+            raise
+
+    def time_left(self, stage: str) -> float:
+        return self.budget.time_left(stage)
+
+    def record_runtime(self, details: Mapping[str, Any]) -> None:
+        self.assert_owner()
+        self.store.record_event(self.job_id, self.lease.token, "runtime",
+                                {**details, "execution_limits": dict(self.budget.limits)})
 
 
 class PreparationAdapter(Protocol):
@@ -48,15 +75,97 @@ class DeliveryAdapter(PreparationAdapter, Protocol):
 PAUSE_CODES = frozenset({"AUTH_REQUIRED", "IDENTITY_MISMATCH", "UI_CHANGED", "RESOURCES_UNCONFIRMED", "CLEANUP_FAILED"})
 
 
+async def _prepare(adapter: PreparationAdapter, context: ExecutionContext) -> dict:
+    prepared = await context.run_stage("prepare", lambda: adapter.prepare(context))
+    if not isinstance(prepared, dict):
+        raise TaskError("INVALID_RESULT", "Adapter preparation must return actual metadata")
+    metadata = json.loads(json.dumps(prepared, ensure_ascii=False, allow_nan=False))
+    context.assert_owner()
+    return metadata
+
+
+async def _submit(adapter: DeliveryAdapter, context: ExecutionContext) -> TaskError | None:
+    try:
+        receipt = await context.run_stage("submit", lambda: adapter.submit(context))
+        if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str) and receipt["content_id"].strip():
+            context.store.record_receipt(context.job_id, context.lease.token, receipt["content_id"])
+    except TaskError as exc:
+        return exc
+    except Exception:
+        return TaskError("SUBMISSION_UNCERTAIN", "The final action may have reached the platform")
+    return None
+
+
+async def _reconcile(adapter: DeliveryAdapter, context: ExecutionContext, job: dict, warnings: list[dict]) -> dict | None:
+    try:
+        evidence = await context.run_stage("reconcile", lambda: adapter.reconcile(context))
+        if not isinstance(evidence, (list, tuple)):
+            raise TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work evidence is unavailable")
+        return match_work(job, context.store.current_attempt(context.job_id), evidence)
+    except TaskError as exc:
+        warnings.append(exc.as_dict())
+    except Exception:
+        warnings.append(TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work verification did not complete").as_dict())
+    return None
+
+
+async def _cleanup(adapter: PreparationAdapter, context: ExecutionContext, warnings: list[dict]) -> TaskError | None:
+    failure = None
+    cancelled = False
+    closing = asyncio.create_task(context.run_stage("cleanup", adapter.close))
+    while True:
+        try:
+            # User cancellation must not cancel the resource owner's shutdown.
+            # The shared cleanup deadline still bounds the shielded operation.
+            await asyncio.shield(closing)
+            break
+        except asyncio.CancelledError:
+            cancelled = True
+            if closing.cancelled():
+                failure = TaskError("CLEANUP_FAILED", "Resource cleanup was interrupted", field="cleanup")
+                break
+        except Exception as exc:
+            failure = (exc if isinstance(exc, TaskError) and exc.code != "TIMEOUT"
+                       else TaskError("CLEANUP_FAILED", "Adapter cleanup did not complete", field="cleanup"))
+            break
+    for item in getattr(adapter, "cleanup_warnings", ()):
+        if isinstance(item, dict) and item.get("code") in PAUSE_CODES and item not in warnings:
+            warnings.append(item)
+    if not await context.budget.settle():
+        # An operation that suppressed cancellation must not release ownership
+        # for a new publisher while it may still reach a browser.
+        context.resources_started()
+        failure = failure or TaskError("RESOURCES_UNCONFIRMED", "An adapter operation may still be running")
+    try:
+        context.lease.assert_resources_closed()
+    except TaskError as exc:
+        if failure is None:
+            failure = exc
+        elif exc.as_dict() not in warnings:
+            warnings.append(exc.as_dict())
+    if cancelled:
+        if failure is not None:
+            warnings.append(failure.as_dict())
+        return TaskError("CANCELLED", "Task execution was cancelled")
+    return failure
+
+
 async def run_once(
     store: Store, runtime_dir: Path, adapters: Mapping[str, PreparationAdapter], job_id: str | None = None,
     *, preflight: Callable[[dict], Mapping[str, Any]] | None = None, max_attempts: int = 2,
+    limits: Mapping[str, float] | None = None, wall_clock: Callable[[], datetime] | None = None,
 ) -> dict | None:
     if type(max_attempts) is not int or not 1 <= max_attempts <= 5:
         raise TaskError("INVALID_INPUT", "max_attempts must be an integer from 1 to 5", field="max_attempts")
+    stage_limits = validate_limits(limits)
+    clock = wall_clock or (lambda: datetime.now(timezone.utc))
     candidates = [store.get(job_id)] if job_id is not None else store.runnable_jobs(max_attempts)
     for candidate in candidates:
         recovering = candidate["status"] in {"SUBMITTING", "UNKNOWN_COMMIT"}
+        if not recovering and not is_due(candidate["manifest"], clock()):
+            if job_id is not None:
+                return candidate
+            continue
         if candidate["status"] not in {"QUEUED", "PREPARING", "READY", "FAILED_PRE_SUBMIT"} and not recovering:
             return candidate if job_id is not None else None
         if not recovering and not store.can_start(candidate["job_id"], max_attempts):
@@ -83,7 +192,8 @@ async def run_once(
                     if job_id is not None:
                         return store.get(job_id)
                     continue
-                context = ExecutionContext(job["job_id"], job["attempt_id"], freeze_manifest(job["manifest"]), store, lease)
+                context = ExecutionContext(job["job_id"], job["attempt_id"], freeze_manifest(job["manifest"]),
+                                           store, lease, ExecutionBudget(stage_limits))
                 error, metadata, warnings = None, None, []
                 if recovering:
                     # Content omissions remain true for this same remote work.
@@ -96,11 +206,7 @@ async def run_once(
                     if not recovering:
                         if preflight is not None:
                             preflight(job)
-                        prepared = await adapter.prepare(context)
-                        if not isinstance(prepared, dict):
-                            raise TaskError("INVALID_RESULT", "Adapter preparation must return actual metadata")
-                        metadata = json.loads(json.dumps(prepared, ensure_ascii=False, allow_nan=False))
-                        context.assert_owner()
+                        metadata = await _prepare(adapter, context)
                     if full_delivery and not recovering:
                         metadata, field_warnings = validate_prepared(job["manifest"], cast(dict, metadata))
                         warnings.extend(field_warnings)
@@ -108,38 +214,24 @@ async def run_once(
                         if preflight is not None:
                             preflight(job)
                         context.assert_owner()
+                        if context.time_left("submit") <= 0:
+                            raise TaskError("TIMEOUT", "Execution deadline expired before submission", field="submit")
                         job = store.begin_submission(job["job_id"], lease.token)
                         submitted = True
-                        try:
-                            receipt = await cast(DeliveryAdapter, adapter).submit(context)
-                            if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str) and receipt["content_id"].strip():
-                                store.record_receipt(job["job_id"], lease.token, receipt["content_id"])
-                        except TaskError as exc:
-                            error = exc
-                        except Exception:
-                            error = TaskError("SUBMISSION_UNCERTAIN", "The final action may have reached the platform")
+                        error = await _submit(cast(DeliveryAdapter, adapter), context)
                     context.assert_owner()
                     if submitted and (error is None or error.code not in PAUSE_CODES):
-                        try:
-                            evidence = await cast(DeliveryAdapter, adapter).reconcile(context)
-                            if not isinstance(evidence, (list, tuple)):
-                                raise TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work evidence is unavailable")
-                            work = match_work(job, store.current_attempt(job["job_id"]), evidence)
-                        except TaskError as exc:
-                            warnings.append(exc.as_dict())
-                        except Exception:
-                            warnings.append(TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work verification did not complete").as_dict())
+                        work = await _reconcile(cast(DeliveryAdapter, adapter), context, job, warnings)
+                except asyncio.CancelledError:
+                    error = TaskError("CANCELLED", "Task execution was cancelled")
                 except TaskError as exc:
                     error = exc
                 except Exception:
                     error = TaskError("SUBMISSION_UNCERTAIN" if submitted else "PREPARATION_FAILED",
                                       "The final action may have reached the platform" if submitted else "Platform preparation failed")
                 finally:
-                    try:
-                        await adapter.close()
-                        lease.assert_resources_closed()
-                    except Exception as exc:
-                        cleanup = exc if isinstance(exc, TaskError) else TaskError("CLEANUP_FAILED", "Adapter cleanup failed")
+                    cleanup = await _cleanup(adapter, context, warnings)
+                    if cleanup is not None:
                         if error is None:
                             error = cleanup
                         else:
@@ -155,7 +247,10 @@ async def run_once(
                     return store.finish_delivery(job["job_id"], lease.token, work=work,
                                                  error=error.as_dict() if error else None, warnings=warnings, pause_reason=pause_reason)
                 paused = pause_reason is not None
-                status = "BLOCKED" if paused else "FAILED_PRE_SUBMIT" if error else "READY"
+                if error is not None and error.code == "NOT_DUE" and not paused:
+                    return store.defer_preparation(job["job_id"], lease.token, max_attempts=max_attempts)
+                status = ("BLOCKED" if paused else "CANCELLED" if error and error.code == "CANCELLED"
+                          else "FAILED_PRE_SUBMIT" if error else "READY")
                 return store.finish_preparation(job["job_id"], lease.token, status=status,
                                                 metadata=metadata, error=error.as_dict() if error else None,
                                                 warnings=warnings, pause_reason=pause_reason)

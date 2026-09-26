@@ -43,7 +43,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 
 `platform` 接受 `douyin`、`xiaohongshu`、`tencent`；视频号只接受 `video`。`account` 必须指向已登记的稳定账号 ID。素材和封面采用绝对路径，规范化时保存路径、类型、SHA-256 和文件版本；准备前及提交前再次核对。适配器拿到的清单为递归只读对象。超限或未知字段明确拒绝，不自动截断、补 AI 声明或选择转载。只有列入 `allow_omit` 的可选字段才允许后续适配器按明确记录降级。
 
-本地校验只接受列出的保守格式与能力范围，不证明平台当前规则或文件转码一定通过。`publish_at` 首版不支持；`run_at` 将在 12 号票接入，目前显式拒绝。旧任务的查询数据继续保留，旧版未带素材摘要和事实的清单不能直接用新接口执行。
+本地校验只接受列出的保守格式与能力范围，不证明平台当前规则或文件转码一定通过。`publish_at` 首版不支持；`run_at` 指定本地执行的启动时刻，格式见下文。旧任务的查询数据继续保留，旧版未带素材摘要和事实的清单不能直接用新接口执行。
 
 平台权益可通过 `declarations.originality_rights` 与 `declarations.repost_authorized` 的显式布尔值表达；省略时不添加默认值。申请原创权益要求内容归属为原创，声明转载获授权要求内容归属为转载；两者都不会推导或改写 AI 使用事实。具体控件是否支持及权益资格仍需平台适配器核查。
 
@@ -59,7 +59,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 |---|---|
 | `job_id` | 一个平台、账号、交付键上的持久交付意图；重试不更换 |
 | `attempt_id` | 某次执行的标识；尚未领取时为 null |
-| `status` | QUEUED、PREPARING、READY、SUBMITTING、UNKNOWN_COMMIT、COMPLETED、FAILED_PRE_SUBMIT、BLOCKED；CANCELLED 由 06 号票接入。COMPLETED 表示已核实作品结果，不等于公开发布 |
+| `status` | QUEUED、PREPARING、READY、SUBMITTING、UNKNOWN_COMMIT、COMPLETED、FAILED_PRE_SUBMIT、BLOCKED、CANCELLED。COMPLETED 表示已核实作品结果，不等于公开发布 |
 | `submission` | NOT_SUBMITTED、MAY_HAVE_SUBMITTED、CONFIRMED；回执 ID 用于定位，必须结合只读作品证据确认结果 |
 | `platform_result` | ACCEPTED、IN_REVIEW、PUBLISHED、REJECTED、DRAFT；尚无证据时为 null，与任务是否执行结束分开 |
 | `verified_at` | 最近一次作品证据的核实时间；入队时间不能替代此字段 |
@@ -83,7 +83,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 
 ## 执行器与账号维护
 
-Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 提供 `run_once(adapters=..., job_id=..., max_attempts=2)` 和串行 `run_pending(adapters=..., max_attempts=2)`。完整适配器实现 `prepare(context)`、`submit(context)`、`reconcile(context)` 和 `close()`；准备返回实际元数据，提交最多调用一次，核对只读作品列表或详情。仅实现准备和清理的兼容适配器结束于 `READY`，该状态没有平台成功含义。
+Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 提供 `run_once(adapters=..., job_id=..., max_attempts=2, limits=...)` 和串行 `run_pending(adapters=..., max_attempts=2, limits=...)`。完整适配器实现 `prepare(context)`、`submit(context)`、`reconcile(context)` 和 `close()`；准备返回实际元数据，提交最多调用一次，核对只读作品列表或详情。仅实现准备和清理的兼容适配器结束于 `READY`，该状态没有平台成功含义。
 
 完整适配器的 `prepare` 必须报告实际读回的 `title`、`body`、`tags`、`media`、`cover`、`collection`、`declarations`。`media` 是有序的 `{kind, sha256}` 列表，摘要关联已确认上传的本地素材；`cover` 为同结构的对象或 null。编排层在 SUBMITTING 前将这些值与不可变清单比较。必需内容或声明不符会返回字段错误并阻止提交；只有明确允许遗漏的可选字段可为空，并保存 `FIELD_OMITTED` 警告。该契约要求适配器提供真实页面证据，不能通过复制请求伪造读回。素材摘要的客户端记录不代表平台返回了同一摘要。
 
@@ -94,3 +94,41 @@ Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 
 所有本机进程与数据库必须共用一个运行目录。默认是 `~/.sau/runtime`，可以统一设置 `SAU_RUNTIME_DIR`；测试或明确隔离的部署可使用 `--runtime-dir` / Python `runtime_dir`。首版每个平台一个账号，因此锁以平台为粒度，避免同一账号的不同别名或数据库绕过互斥。维护接口 `service.maintenance(platform, account)` 及三平台现有 CLI 登录、检查、视频/图文上传入口使用相同的操作系统锁。异常退出的旧流程无法证明资源已关闭时也保留阻断标记；这不把旧上传命令升级为带提交恢复的任务接口。
 
 锁文件不会按时间删除或过期。旧进程存活、身份无法确认、浏览器关闭未确认时均拒绝接管；不要通过删除运行目录或切换运行目录解决账号繁忙。只有旧进程已退出且资源关闭能够确认，提交前的未完成尝试才可在上限内恢复；提交后的恢复复用原尝试，只读核对。离线测试证明本地防重复执行，不能证明平台远端 exactly-once。
+
+## 截止、取消和浏览器
+
+执行采用单调时钟，所有阶段共享总预算并预留清理时间。默认秒数：`total=900`、`prepare=720`、`navigation=60`、`upload=300`、`processing=300`、`metadata=60`、`submit=30`、`reconcile=60`、`session_save=10`、`cleanup=10`。同一阶段的多次操作累计扣减预算。`limits` 可覆盖这些键，值必须是有限正数且 `total > cleanup`；例如 `{ "total": 60, "upload": 30, "cleanup": 5 }`。
+
+适配器通过 `context.run_stage(name, operation)` 执行可取消的异步操作。准备超时返回 `TIMEOUT` 和阶段名，提交后超时保留可能已提交的边界。取消发生在提交前且清理确认时返回 `CANCELLED / NOT_SUBMITTED`；提交后取消返回 `UNKNOWN_COMMIT / MAY_HAVE_SUBMITTED`，指定任务的后续执行只读核对。取消不会撤销远端作品。清理也有总截止，外部取消不会中断已经开始的有界清理；资源不能确认关闭时暂停账号并保留主要错误。
+
+`BrowserSession` 沿用固定版本 Patchright，创建资源后立即纳入关闭流程，独立尝试 page、context、browser 和 driver 的关闭。会话保存先验证临时文件再原子替换。运行事件关联 driver/browser 版本、公开启动选项和实际执行预算，不记录会话内容或可执行文件路径。适配器必须采用异步、可取消的驱动操作；任意阻塞 Python 扩展或自行忽略取消的第三方插件不属于已验证执行路径，无法证明停止时账号仍保持资源阻断。
+
+## 本地定时启动
+
+单平台清单或批量清单可以加入：
+
+```json
+"run_at": { "local": "2026-11-01T01:30:00", "timezone": "America/Los_Angeles", "fold": 1 }
+```
+
+`local` 不含 UTC 偏移，`timezone` 使用明确的 IANA 名称。系统保存原始本地时间、时区、所选 `fold` 与规范 UTC 时刻。夏令时不存在的时间拒绝；重复时间必须指定 `fold: 0` 或 `fold: 1`。非重复时间可省略 fold。Windows 通过固定的 tzdata 依赖提供时区数据。重启或更改本机时区不会改写已存 UTC。
+
+未到期任务不创建尝试，也不启动浏览器；到期后由串行执行器领取。准备期间若时钟回拨到启动时刻之前，任务安全延期，本次尝试记为 `DEFERRED`；到达尝试总上限则返回 `ATTEMPT_LIMIT`。提交不明任务的只读恢复不受原始启动时间限制。`run_at` 是启动约束，实际开始见 attempts，平台结果及核实时间单独记录；它不保证作品在该时刻公开。
+
+## 多平台分发
+
+批量清单保留单平台清单的内容字段，移除顶层 `platform`、`account`，改为：
+
+```json
+"targets": [
+  { "platform": "douyin", "account": "creator" },
+  { "platform": "xiaohongshu", "account": "creator", "overrides": { "title": "平台专用标题" } },
+  { "platform": "tencent", "account": "creator" }
+]
+```
+
+使用 `sau jobs ... --json enqueue-batch --manifest batch.json` 保存，使用 `batch-status <batch_id>` 查询；Python 对应 `enqueue_batch(payload)` 和 `batch_status(batch_id)`。`overrides` 仅覆盖内容和调度字段，不能更换 schema、交付键或目标身份。批次交付键在同一数据库内唯一，子任务继承该键并由平台、账号区分。
+
+所有目标的规范化内容快照或验证错误先在同一事务内保存，然后创建独立子任务。重复批次返回原集合；同键改变请求返回 `CONFLICT`。恢复未完成的批次登记使用原快照，即使本地素材已改变也不会改成另一份内容；后续执行仍会核验文件版本。成功目标和提交不明目标不会因再次登记批次而重发。
+
+汇总包含各目标 job_id、提交状态、平台结果、错误、证据和账号暂停原因。单个目标不支持或失败不会撤销其他目标。汇总的 `COMPLETED` 表示所有目标已核实为受理、审核中或已发布；拒绝和草稿不会被计为统一成功，应继续查看逐平台结果。排队与暂停保持可见，系统不会删除已发作品来回滚部分成功。

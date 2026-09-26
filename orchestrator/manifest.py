@@ -12,10 +12,10 @@ from typing import Any, Mapping
 from orchestrator.errors import TaskError
 
 
-_INPUT_FIELDS = frozenset({
+MANIFEST_FIELDS = frozenset({
     "schema_version", "delivery_key", "platform", "account", "content_type",
     "title", "body", "tags", "media", "cover", "collection", "facts",
-    "declarations", "field_policy",
+    "declarations", "field_policy", "run_at",
 })
 
 # Intake ceilings are intentionally conservative offline gates, not claims
@@ -57,18 +57,21 @@ def freeze_manifest(value: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def normalize_manifest(raw: dict[str, Any], media_roots: tuple[Path, ...], expected_id: str) -> dict[str, Any]:
-    for field in ("publish_at", "run_at"):
-        if field in raw:
-            raise TaskError("UNSUPPORTED", "Scheduling is not supported by this task stage", field=field)
+    if "publish_at" in raw:
+        raise TaskError("UNSUPPORTED", "Platform publication scheduling is not supported", field="publish_at")
     if any(not isinstance(key, str) for key in raw):
         raise TaskError("INVALID_INPUT", "Manifest keys must be strings", field="manifest")
-    extra = sorted(raw.keys() - _INPUT_FIELDS)
+    extra = sorted(raw.keys() - MANIFEST_FIELDS)
     if extra:
         raise TaskError("INVALID_INPUT", "Manifest field is not supported", field=extra[0])
     try:
         normalized = json.loads(json.dumps(raw, ensure_ascii=False, allow_nan=False))
     except (TypeError, ValueError) as exc:
         raise TaskError("INVALID_INPUT", "Manifest contains a non-JSON value", field="manifest") from exc
+    if "run_at" in normalized:
+        from orchestrator.scheduling import normalize_run_at
+
+        normalized["run_at"] = normalize_run_at(normalized["run_at"])
     _validate_facts(normalized)
     _validate_field_policy(normalized)
     _validate_content(normalized)

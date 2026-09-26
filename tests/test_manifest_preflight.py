@@ -73,16 +73,15 @@ def test_manifest_cannot_supply_a_session_path(tmp_path):
     assert service.list_jobs() == []
 
 
-@pytest.mark.parametrize("field", ["publish_at", "run_at"])
-def test_unavailable_scheduling_never_becomes_immediate_execution(tmp_path, field):
+def test_platform_publication_scheduling_remains_unsupported(tmp_path):
     service = make_service(tmp_path)
-    manifest = make_manifest(tmp_path, **{field: "2030-01-01T12:00:00Z"})
+    manifest = make_manifest(tmp_path, publish_at="2030-01-01T12:00:00Z")
 
     with pytest.raises(TaskError) as caught:
         service.enqueue(manifest)
 
     assert caught.value.code == "UNSUPPORTED"
-    assert caught.value.field == field
+    assert caught.value.field == "publish_at"
     assert service.list_jobs() == []
 
 

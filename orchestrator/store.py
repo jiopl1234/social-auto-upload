@@ -9,10 +9,11 @@ import json
 from pathlib import Path
 import sqlite3
 from time import monotonic, sleep
-from typing import Iterator
+from typing import Callable, Iterator
 from uuid import uuid4
 
 from .errors import TaskError
+from .scheduling import is_due
 
 
 SCHEMA_VERSION = 2
@@ -20,6 +21,7 @@ RESULT_SCHEMA_VERSION = 1
 
 
 def _utc_now() -> str:
+    """Wall-clock timestamp retained for account binding compatibility."""
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
@@ -30,13 +32,23 @@ def _canonical_json(value: object) -> str:
 class Store:
     """A SQLite-backed store with one connection per operation."""
 
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, *, clock: Callable[[], datetime] | None = None):
         self.path = Path(path)
+        self.clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise TaskError("STORAGE_ERROR", "Cannot prepare the job database directory.") from exc
         self._initialize()
+
+    def _now(self) -> datetime:
+        now = self.clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("Task clock must return an aware datetime")
+        return now.astimezone(timezone.utc)
+
+    def _utc_now(self) -> str:
+        return self._now().isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path), timeout=5, isolation_level=None)
@@ -236,7 +248,7 @@ class Store:
                 raise TaskError("CONFLICT", "Delivery key is already used for a different manifest.", field="delivery_key")
 
             job_id = uuid4().hex
-            now = _utc_now()
+            now = self._utc_now()
             connection.execute(
                 """INSERT INTO jobs (
                     job_id, platform, account, delivery_key, request_digest, manifest_json,
@@ -298,7 +310,8 @@ class Store:
                    ORDER BY j.created_at, j.job_id"""
             ).fetchall()
             return [self._job_from_row(row) for row in rows
-                    if row["status"] == "SUBMITTING" or self._can_start(connection, row, max_attempts)]
+                    if row["status"] == "SUBMITTING"
+                    or self._can_start(connection, row, max_attempts)]
 
     @staticmethod
     def _unfinished_preparation(connection: sqlite3.Connection, job: sqlite3.Row) -> bool:
@@ -311,8 +324,12 @@ class Store:
     def _can_start(self, connection: sqlite3.Connection, job: sqlite3.Row, max_attempts: int) -> bool:
         if job["submission"] != "NOT_SUBMITTED":
             return False
+        manifest = self._decode(job["manifest_json"])
+        if not isinstance(manifest, dict) or not is_due(manifest, self._now()):
+            return False
         if job["status"] == "QUEUED":
-            return True
+            count = connection.execute("SELECT COUNT(*) FROM attempts WHERE job_id = ?", (job["job_id"],)).fetchone()[0]
+            return count < max_attempts
         if self._unfinished_preparation(connection, job):
             return True
         error = self._decode(job["error_json"])
@@ -335,8 +352,11 @@ class Store:
                 return None
             # AccountLease has already proved that the previous owner cannot
             # still write. A durable boundary is the remaining retry fence.
+            manifest = self._decode(job["manifest_json"])
+            if not isinstance(manifest, dict) or not is_due(manifest, self._now()):
+                return None
             if self._unfinished_preparation(connection, job):
-                now = _utc_now()
+                now = self._utc_now()
                 interrupted = TaskError("TRANSIENT_PRE_SUBMIT", "The previous executor stopped before submission").as_dict()
                 connection.execute("UPDATE attempts SET status = 'FAILED_PRE_SUBMIT', finished_at = ? WHERE attempt_id = ?",
                                    (now, job["attempt_id"]))
@@ -347,7 +367,7 @@ class Store:
                 job = self._job_row(connection, job_id)
             if not self._can_start(connection, job, max_attempts):
                 return None
-            attempt_id, now = uuid4().hex, _utc_now()
+            attempt_id, now = uuid4().hex, self._utc_now()
             connection.execute(
                 "INSERT INTO attempts (attempt_id, job_id, status, started_at, owner_token) VALUES (?, ?, 'PREPARING', ?, ?)",
                 (attempt_id, job_id, now, owner_token),
@@ -377,15 +397,63 @@ class Store:
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
 
+    def record_event(self, job_id: str, owner_token: str, stage: str, details: dict) -> None:
+        """Append evidence only while this executor owns the active attempt."""
+        if not isinstance(stage, str) or not stage or not isinstance(details, dict):
+            raise TaskError("INVALID_INPUT", "Event stage and details are required")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            connection.execute(
+                "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (job_id, job["attempt_id"], job["status"], stage, self._utc_now(), _canonical_json(details)),
+            )
+
+    def defer_preparation(self, job_id: str, owner_token: str, max_attempts: int = 2) -> dict:
+        """Release an active pre-submit attempt when its scheduled time is future again."""
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 5:
+            raise TaskError("INVALID_INPUT", "max_attempts must be an integer from 1 to 5", field="max_attempts")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            if job["status"] not in {"PREPARING", "READY"} or job["submission"] != "NOT_SUBMITTED":
+                raise TaskError("INVALID_STATE", "Task cannot be deferred after submission")
+            now = self._utc_now()
+            count = connection.execute("SELECT COUNT(*) FROM attempts WHERE job_id = ?", (job_id,)).fetchone()[0]
+            if count >= max_attempts:
+                error = TaskError("ATTEMPT_LIMIT", "Scheduled time remained in the future at the attempt limit", field="run_at").as_dict()
+                connection.execute("UPDATE attempts SET status = 'FAILED_PRE_SUBMIT', finished_at = ? WHERE attempt_id = ?",
+                                   (now, job["attempt_id"]))
+                connection.execute(
+                    """UPDATE jobs SET status = 'FAILED_PRE_SUBMIT', error_json = ?,
+                       warnings_json = '[]', actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
+                    (_canonical_json(error), now, job_id),
+                )
+                status, details = "FAILED_PRE_SUBMIT", {"error": error}
+            else:
+                connection.execute("UPDATE attempts SET status = 'DEFERRED', finished_at = ? WHERE attempt_id = ?",
+                                   (now, job["attempt_id"]))
+                connection.execute(
+                    """UPDATE jobs SET status = 'QUEUED', attempt_id = NULL, error_json = NULL,
+                       warnings_json = '[]', actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
+                    (now, job_id),
+                )
+                status, details = "QUEUED", {"reason": "NOT_DUE"}
+            connection.execute(
+                "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, 'schedule', ?, ?)",
+                (job_id, job["attempt_id"], status, now, _canonical_json(details)),
+            )
+            return self._job_from_row(self._job_row(connection, job_id))
+
     def finish_preparation(self, job_id: str, owner_token: str, *, status: str, metadata=None, error=None, warnings=None, pause_reason=None) -> dict:
-        if status not in {"READY", "FAILED_PRE_SUBMIT", "BLOCKED"}:
+        if status not in {"READY", "FAILED_PRE_SUBMIT", "BLOCKED", "CANCELLED"}:
             raise TaskError("INVALID_STATE", "Invalid preparation result")
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
             if job["status"] not in {"PREPARING", "READY"} or job["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Task is not preparing")
-            now = _utc_now()
+            now = self._utc_now()
             connection.execute(
                 """UPDATE jobs SET status = ?, actual_metadata_json = ?, error_json = ?, warnings_json = ?, updated_at = ?
                    WHERE job_id = ?""",
@@ -408,13 +476,12 @@ class Store:
         with self.transaction() as connection:
             self._pause_account(connection, platform, account, reason)
 
-    @staticmethod
-    def _pause_account(connection: sqlite3.Connection, platform: str, account: str, reason: dict) -> None:
+    def _pause_account(self, connection: sqlite3.Connection, platform: str, account: str, reason: dict) -> None:
         connection.execute(
             """INSERT INTO accounts (platform, account, status, pause_reason, updated_at) VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(platform, account) DO UPDATE SET status = excluded.status,
                pause_reason = excluded.pause_reason, updated_at = excluded.updated_at""",
-            (platform, account, reason["code"], _canonical_json(reason), _utc_now()),
+            (platform, account, reason["code"], _canonical_json(reason), self._utc_now()),
         )
 
     def accounts(self) -> list[dict]:
@@ -428,7 +495,7 @@ class Store:
             job = self._job_row(connection, job_id)
             if job["status"] != "PREPARING" or job["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Task is not preparing for submission")
-            now = _utc_now()
+            now = self._utc_now()
             connection.execute("UPDATE jobs SET status = 'READY', actual_metadata_json = ?, warnings_json = ?, updated_at = ? WHERE job_id = ?",
                                (_canonical_json(metadata), _canonical_json(warnings or []), now, job_id))
             connection.execute("UPDATE attempts SET status = 'READY' WHERE attempt_id = ?", (job["attempt_id"],))
@@ -443,7 +510,7 @@ class Store:
             job = self._job_row(connection, job_id)
             if job["status"] != "READY" or job["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "The final submission boundary cannot be crossed again")
-            now = _utc_now()
+            now = self._utc_now()
             changed = connection.execute(
                 """UPDATE attempts SET status = 'SUBMITTING', submit_count = 1, submission_started_at = ?
                    WHERE attempt_id = ? AND submit_count = 0""", (now, job["attempt_id"]),
@@ -481,7 +548,7 @@ class Store:
                     or job["submission"] != "MAY_HAVE_SUBMITTED"
                     or (account and account["status"] != "READY")):
                 return None
-            now = _utc_now()
+            now = self._utc_now()
             connection.execute("UPDATE attempts SET owner_token = ?, status = 'UNKNOWN_COMMIT', finished_at = NULL WHERE attempt_id = ?",
                                (owner_token, job["attempt_id"]))
             connection.execute("UPDATE jobs SET status = 'UNKNOWN_COMMIT', updated_at = ? WHERE job_id = ?", (now, job_id))
@@ -495,7 +562,7 @@ class Store:
             job = self._job_row(connection, job_id)
             if job["submission"] != "MAY_HAVE_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Task has not crossed the submission boundary")
-            now = _utc_now()
+            now = self._utc_now()
             status = "COMPLETED" if work is not None else "UNKNOWN_COMMIT"
             evidence = [] if work is None else [{
                 "kind": work["source"], "content_id": work["content_id"],

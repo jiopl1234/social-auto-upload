@@ -31,7 +31,9 @@ def wait_json(path: Path, *, process: subprocess.Popen | None = None) -> dict:
     while True:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
+            # Windows can transiently deny a reader while the child replaces
+            # its atomic result file. Keep the same bounded process wait.
             pass
         if process is not None and process.poll() is not None:
             stdout, stderr = process.communicate(timeout=1)
