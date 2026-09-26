@@ -2,7 +2,7 @@
 
 Tracker: local Markdown
 
-规格和 15 张票已按用户批准的拆分发布。ready-for-agent 表示规格可实施；只有前置票均为 done 才能领取。
+规格和 15 张票已按用户批准的拆分发布，实施与离线验收全部完成。逐票 done 表示已达到约定的离线交付标准；真实平台生产验证仍未完成。
 
 | 票号 | 任务 | 状态 |
 |---|---|---|
@@ -20,9 +20,11 @@ Tracker: local Markdown
 | 12 | [按显式时区到时启动任务，重启后不重复触发](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/12-timezone-aware-local-scheduling.md) | done |
 | 13 | [一份清单分发到多个平台，部分失败可独立追踪](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/13-multi-platform-fanout.md) | done |
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | done |
-| 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | ready-for-agent |
+| 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | done |
 
-当前 frontier：15。01–14 已完成，最后执行统一离线验收与生产能力状态记录。
+当前 frontier：无。01–15 全部完成；干净环境统一验收为 342 项测试与 20 项子测试通过、0 skipped，核心与 CLI 类型检查为 0 errors。
+
+最终证据：[五路径联合验收](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-validation.md)、[独立双轴审查](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-review.md)。五路径均已通过本地任务协议与合成页面验证；真实平台账号身份、逐素材状态和作品读回没有实测证据，生产执行保持 restricted。
 
 04/05 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-review.md)。完整离线测试为 158 项与 20 项子测试通过；真实平台发布仍未验证。
 

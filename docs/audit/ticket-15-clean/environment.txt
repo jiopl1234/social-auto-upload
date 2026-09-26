@@ -1,0 +1,6 @@
+commit=bb09166fd5b80b543468d300d9fb8580f9aa38a4
+source=C:\Users\Chinese\AppData\Local\Temp\sau-acceptance-b20931da660a48c8b291a1206551f024\source
+venv=C:\Users\Chinese\AppData\Local\Temp\sau-acceptance-b20931da660a48c8b291a1206551f024\venv
+configuration=conf.example.py
+browser=Chrome 152.0.7977.83
+driver=Patchright 1.58.2

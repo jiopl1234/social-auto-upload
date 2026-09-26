@@ -35,4 +35,19 @@
 
 能力 JSON 的离线/生产区分先因缺失字段失败，实现后通过。首轮新增联合验收 26 项通过、1 项 Windows 握手文件替换瞬间 PermissionError；有界握手读取现同时等待暂时缺失与临时共享拒绝，保留原 10 秒期限，持久权限错误仍失败。没有改变交付判定。
 
-干净目录、独立虚拟环境的最终完整结果与独立双轴审查结果在收尾后补充。已知限制持续保留：没有零风控保证，没有远端 exactly-once 证明，挑战后可以持续暂停；离线通过不等于可用于真实无人值守生产。
+## 最终验证结果
+
+固定实现提交 `bb09166fd5b80b543468d300d9fb8580f9aa38a4` 通过 git archive 导出到新的临时目录；使用独立虚拟环境，从 conf.example.py 创建配置，没有复制用户配置或会话。`uv sync --frozen --offline --group dev` 安装 27 个锁定依赖，随后统一入口退出码为 0。
+
+- 环境：Windows、Python 3.12.10、Patchright 1.58.2、Chrome 152.0.7977.83、pytest 9.1.1、pytest-timeout 2.4.0、Pyright 1.1.414。
+- 完整测试：342 passed、20 subtests passed，301.08 秒；0 failures、0 errors、0 skipped。JUnit 将子测试一起计数为 362，不是额外 362 项主测试。
+- 核心与 CLI 类型检查：0 errors、0 warnings、0 informations。
+- 原始证据：[环境](ticket-15-clean/environment.txt)、[测试输出](ticket-15-clean/offline-pytest.txt)、[JUnit](ticket-15-clean/offline-pytest.xml)、[类型检查](ticket-15-clean/offline-pyright.txt)。
+
+独立审查后，`ddb03e7f7bd8700febefd266210f0c3b5da82c37` 仅将重复的五路径预期提取为测试支持常量，保持独立于生产能力列表。相关发布整合与进程恢复 27 项再次通过，58.53 秒；核心、CLI、验收脚本和三个测试支持文件的类型检查为 0 errors。该差异不修改生产代码或测试场景，未重复运行完整套件；[修正后 JUnit](ticket-15-clean/review-fix-pytest.xml) 保留复验结果。
+
+代码图按 Tier 2 核验，项目 `C-Users-Chinese-social-auto-upload`，generation `2026-09-26T17:25:31Z`。新增整合测试检索 3/3、能力查询检索 1/1；分发整合测试双向一层调用追踪无截断。coverage 对代码报告 metadata_changed，对 scripts、tests/fixtures 和文档报告 excluded，已直接读取当前源文件兜底；这不是图完整性的证明。
+
+Standards 0 项硬违反、1 项维护性建议已修复并复核关闭；Spec 0 项发现。详情见 [双轴审查](ticket-15-review.md)。01–15 的离线实施与验收已经完成。
+
+已知限制持续保留：没有零风控保证，没有远端 exactly-once 证明，挑战后可以持续暂停；离线通过不等于可用于真实无人值守生产。五条路径的真实平台账号身份、逐素材处理与作品读回仍未验证，生产能力保持 restricted；没有执行真实只读探测或发布，也没有勾选生产验证完成。
