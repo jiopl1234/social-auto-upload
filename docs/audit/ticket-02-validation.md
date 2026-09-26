@@ -12,6 +12,7 @@
 - 四个独立进程同时入队。测试揭示首次切换 WAL 时的 `database is locked` 竞争；修复为有界重试后，存储子代理连续 20 个新数据库运行均通过，完整测试也通过。
 - 无效 JSON、命令缺参、不存在任务及未来数据库版本均产生可解析 JSON 错误和相符的非零退出码。
 - 旧平台 CLI 启动测试仍使用无第三方包子进程，只增加复制新的标准库任务包；不因此加载浏览器上传器。
+- Spec 审查发现机器帮助仍输出纯文本。新增公共测试先复现 JSON 解析失败，再将 `--json --help` 改为 HELP JSON；父命令与子命令帮助均可解析，且不创建数据库。
 
 ```text
 uv run --frozen --with pytest --with pytest-timeout python -m pytest tests -q --timeout=30 --tb=short --junitxml=docs/audit/ticket-02-pytest.xml
@@ -19,7 +20,7 @@ uv run --frozen --with pyright pyright orchestrator sau_cli.py tests/test_job_cl
 git diff --check
 ```
 
-完整测试：**56 passed, 20 subtests passed**，18.34 秒。定向 Pyright：0 errors，0 warnings。差异检查通过。
+审查前完整测试：**56 passed, 20 subtests passed**，18.34 秒。帮助输出修复后的最终结果见下方原始报告。定向 Pyright：0 errors，0 warnings。差异检查通过。
 
 原始结果：[文本](ticket-02-pytest.txt)、[JUnit XML](ticket-02-pytest.xml)。
 

@@ -1463,12 +1463,22 @@ async def dispatch(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    import io
+    import json
+    from contextlib import nullcontext, redirect_stdout
+
     parser = build_parser()
     arguments = list(argv) if argv is not None else sys.argv[1:]
+    machine_mode = bool(arguments and arguments[0] == "jobs" and "--json" in arguments)
+    parser_output = io.StringIO()
     try:
-        args = parser.parse_args(arguments)
+        with redirect_stdout(parser_output) if machine_mode else nullcontext():
+            args = parser.parse_args(arguments)
     except SystemExit as exc:
-        if exc.code and arguments and arguments[0] == "jobs" and "--json" in arguments:
+        if machine_mode:
+            if not exc.code:
+                print(json.dumps({"schema_version": 1, "status": "HELP", "help": parser_output.getvalue()}, ensure_ascii=False))
+                return 0
             from orchestrator.cli import emit_error
             from orchestrator.errors import TaskError
 

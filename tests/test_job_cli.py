@@ -143,3 +143,13 @@ def test_invalid_manifest_and_future_database_schema_report_json_errors(tmp_path
     completed, invalid = run_jobs(db, "list")
     assert completed.returncode == 1
     assert invalid["error"]["code"] == "STORAGE_ERROR"
+
+
+def test_machine_help_is_also_one_json_value(tmp_path):
+    db = tmp_path / "unused.sqlite3"
+    for arguments in (("--help",), ("enqueue", "--help")):
+        completed, result = run_jobs(db, *arguments)
+        assert completed.returncode == 0
+        assert result["status"] == "HELP"
+        assert "enqueue" in result["help"]
+    assert not db.exists()
