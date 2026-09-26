@@ -188,6 +188,32 @@ def test_run_of_finished_task_is_read_only_even_when_live_capability_is_restrict
     assert service.events(job["job_id"]) == previous_events
 
 
+def test_run_of_failed_and_not_due_tasks_preserves_persisted_results(tmp_path):
+    import asyncio
+    from orchestrator.errors import TaskError
+
+    service = make_service(tmp_path)
+    future = service.enqueue(make_manifest(tmp_path, key="future", run_at={
+        "local": "2099-01-01T00:00:00", "timezone": "UTC"}))
+    failed = service.enqueue(make_manifest(tmp_path, key="failed"))
+
+    class InvalidTarget:
+        async def prepare(self, context):
+            raise TaskError("INVALID_INPUT", "Required content is missing", field="title")
+
+        async def close(self):
+            pass
+
+    failed = asyncio.run(service.run_once(adapters={"douyin": InvalidTarget()}, job_id=failed["job_id"]))
+    assert failed is not None and failed["status"] == "FAILED_PRE_SUBMIT"
+    for job in (future, failed):
+        previous_events = service.events(job["job_id"])
+        completed, result = run_jobs(service.store.path, "run", "--job", job["job_id"])
+        assert completed.returncode == 0
+        assert result == job
+        assert service.events(job["job_id"]) == previous_events
+
+
 def test_account_pause_reason_is_queryable_from_machine_cli(tmp_path):
     from orchestrator.service import TaskService
 

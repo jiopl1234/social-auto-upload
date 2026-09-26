@@ -153,8 +153,7 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
     await run_child_request(request)
 
 
-async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process",
-                            register_process: Callable[[int], None] | None = None) -> None:
+async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process") -> None:
     """Run an internal operation in a watched child that is reaped on cancellation."""
     if module not in {"orchestrator.preflight_process", "orchestrator.diagnostic_process", "orchestrator.session_process"}:
         raise TaskError("UNSUPPORTED", "Child operation is not supported")
@@ -185,8 +184,6 @@ async def run_child_request(request: dict[str, Any], *, module: str = "orchestra
     loop = asyncio.get_running_loop()
     reader: asyncio.Future[tuple[int, bytes | None]] = loop.create_future()
     try:
-        if register_process is not None:
-            register_process(process.pid)
         threading.Thread(target=_read_child, args=(process, payload, loop, reader), daemon=True).start()
     except Exception as exc:
         if process.poll() is None:

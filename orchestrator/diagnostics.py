@@ -141,6 +141,7 @@ _PLATFORMS = frozenset({"douyin", "xiaohongshu", "tencent"})
 _CONTENT_TYPES = frozenset({"video", "note"})
 _HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
 _ARTIFACT = re.compile(r"[0-9a-f]{32}\.json\Z")
+_ARTIFACT_TEMP = re.compile(r"[0-9a-f]{32}\.json\.[0-9a-f]{32}\.tmp\Z")
 EVIDENCE_RETENTION_DAYS = 30
 
 
@@ -274,7 +275,7 @@ def sanitize_public_result(value: Any) -> Any:
 
 def prune_private_evidence(runtime_dir: Path, *, now: float | None = None,
                            retention_days: int = EVIDENCE_RETENTION_DAYS) -> int:
-    """Remove only expired diagnostic UUID files under the managed evidence tree."""
+    """Remove expired managed evidence and interrupted writes, never other files."""
     if type(retention_days) is not int or retention_days < 1:
         raise ValueError("Evidence retention must be at least one day")
     root = Path(runtime_dir) / "evidence"
@@ -296,7 +297,8 @@ def prune_private_evidence(runtime_dir: Path, *, now: float | None = None,
                     not attempt_dir.is_dir()):
                 continue
             for artifact in attempt_dir.iterdir():
-                if not _ARTIFACT.fullmatch(artifact.name) or artifact.is_symlink():
+                if (not (_ARTIFACT.fullmatch(artifact.name) or _ARTIFACT_TEMP.fullmatch(artifact.name))
+                        or artifact.is_symlink()):
                     continue
                 if artifact.is_file() and artifact.stat().st_mtime < cutoff:
                     artifact.unlink()

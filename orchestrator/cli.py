@@ -42,6 +42,7 @@ def emit_error(error: TaskError) -> int:
 
 async def dispatch(args: argparse.Namespace) -> int:
     from orchestrator.service import TaskService
+    from orchestrator.diagnostics import sanitize_public_result
 
     try:
         service = TaskService(args.db, runtime_dir=args.runtime_dir, media_roots=args.media_root)
@@ -73,12 +74,17 @@ async def dispatch(args: argparse.Namespace) -> int:
             from orchestrator.platforms import default_adapters
 
             selected = service.status(args.job_id) if args.job_id else None
-            if selected is not None and selected["status"] not in {
-                "QUEUED", "PREPARING", "READY", "FAILED_PRE_SUBMIT", "SUBMITTING", "UNKNOWN_COMMIT",
-            }:
-                # Querying a finished intent must not require a live adapter.
-                print(json.dumps(selected, ensure_ascii=False, allow_nan=False))
-                return 0
+            if selected is not None:
+                # Let the worker decide whether this call needs an adapter;
+                # finished, non-retryable and future jobs are read-only.
+                try:
+                    idle = await service.run_once(adapters={}, job_id=args.job_id)
+                except TaskError as exc:
+                    if exc.code != "UNSUPPORTED":
+                        raise
+                else:
+                    print(json.dumps(sanitize_public_result(idle), ensure_ascii=False, allow_nan=False))
+                    return 0
             paths = service.capabilities()
             if selected is not None:
                 paths = [item for item in paths if item["platform"] == selected["platform"]
@@ -90,8 +96,6 @@ async def dispatch(args: argparse.Namespace) -> int:
                       else {"jobs": await service.run_pending(adapters=adapters)})
         else:
             raise TaskError("INVALID_INPUT", "Unknown task action", field="action")
-        from orchestrator.diagnostics import sanitize_public_result
-
         print(json.dumps(sanitize_public_result(result), ensure_ascii=False, allow_nan=False))
         return 0
     except TaskError as exc:

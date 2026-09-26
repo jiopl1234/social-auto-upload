@@ -46,6 +46,19 @@ def test_run_records_one_attempt_and_does_not_infer_a_platform_result(tmp_path):
     assert target.closed == 1
 
 
+def test_equal_intake_timestamps_keep_enqueue_order(tmp_path):
+    from datetime import datetime, timezone
+    from orchestrator.service import TaskService
+
+    original = make_service(tmp_path)
+    service = TaskService(original.store.path, runtime_dir=original.runtime_dir,
+                          media_roots=[tmp_path / "media"],
+                          clock=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
+    jobs = [service.enqueue(manifest(tmp_path, key=str(i))) for i in range(6)]
+    result = asyncio.run(service.run_pending(adapters={"douyin": PreparedTarget()}))
+    assert [job["job_id"] for job in result] == [job["job_id"] for job in jobs]
+
+
 def test_unconfirmed_resource_shutdown_blocks_account_and_other_platform_proceeds(tmp_path):
     class UnclosedTarget(PreparedTarget):
         async def prepare(self, context):

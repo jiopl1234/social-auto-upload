@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from uuid import uuid4
 
 import pytest
 
@@ -171,15 +172,41 @@ def test_evidence_retention_removes_only_expired_managed_artifacts(tmp_path):
     expired = service.runtime_dir / reference["path"]
     old_time = time.time() - 31 * 86400
     os.utime(expired, (old_time, old_time))
+    expired_temp = expired.with_name(f"{expired.name}.{uuid4().hex}.tmp")
+    expired_temp.write_bytes(b"interrupted managed write")
+    os.utime(expired_temp, (old_time, old_time))
+    fresh_temp = expired.with_name(f"{expired.name}.{uuid4().hex}.tmp")
+    fresh_temp.write_bytes(b"recent managed write")
+    unmanaged_temp = expired.with_name(f"{expired.name}.not-a-uuid.tmp")
+    unmanaged_temp.write_bytes(b"unmanaged temporary file")
+    os.utime(unmanaged_temp, (old_time, old_time))
+    outside = tmp_path / "outside-evidence.txt"
+    outside.write_text("keep linked file", encoding="utf-8")
+    os.utime(outside, (old_time, old_time))
+    linked_temp = expired.with_name(f"{uuid4().hex}.json.{uuid4().hex}.tmp")
+    try:
+        linked_temp.symlink_to(outside)
+    except (NotImplementedError, OSError):
+        linked_temp = None
     unmanaged = service.runtime_dir / "evidence" / "user-notes.txt"
     unmanaged.write_text("unmanaged content", encoding="utf-8")
 
     second = service.enqueue(make_manifest(tmp_path, key="new-evidence"))
     asyncio.run(service.run_once(adapters={"douyin": RuntimeEvidence(service.runtime_dir)}, job_id=second["job_id"]))
+    new_reference = next(item["details"]["evidence_ref"] for item in service.events(second["job_id"])
+                         if item["stage"] == "runtime")
+    fresh_artifact = service.runtime_dir / new_reference["path"]
     removed = service.prune_evidence()
 
-    assert removed == 1
+    assert removed == 2
     assert not expired.exists()
+    assert not expired_temp.exists()
+    assert fresh_artifact.is_file()
+    assert fresh_temp.read_bytes() == b"recent managed write"
+    assert unmanaged_temp.read_bytes() == b"unmanaged temporary file"
+    if linked_temp is not None:
+        assert linked_temp.is_symlink()
+    assert outside.read_text(encoding="utf-8") == "keep linked file"
     assert unmanaged.read_text(encoding="utf-8") == "unmanaged content"
     assert session.read_bytes() == original_session
 

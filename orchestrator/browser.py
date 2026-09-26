@@ -136,8 +136,7 @@ class BrowserSession:
                 if len(payload) > 5_000_000:
                     raise ValueError("Storage state exceeds the managed limit")
                 await run_child_request({"path": str(path), "state": state},
-                                        module="orchestrator.session_process",
-                                        register_process=self.context.register_process)
+                                        module="orchestrator.session_process")
             except TaskError as exc:
                 if exc.code == "RESOURCES_UNCONFIRMED":
                     self._creation_uncertain = True

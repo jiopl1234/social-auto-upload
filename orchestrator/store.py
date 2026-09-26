@@ -482,7 +482,7 @@ class Store:
                    ON a.platform = j.platform AND a.account = j.account
                    WHERE j.status IN ('QUEUED', 'FAILED_PRE_SUBMIT', 'PREPARING', 'READY', 'SUBMITTING')
                      AND (a.status IS NULL OR a.status = 'READY')
-                   ORDER BY j.created_at, j.job_id"""
+                   ORDER BY j.created_at, j.rowid"""
             ).fetchall()
             return [self._job_from_row(row) for row in rows
                     if row["status"] == "SUBMITTING"
