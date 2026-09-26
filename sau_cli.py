@@ -435,34 +435,6 @@ async def _upload_video_with_lease(request: DouyinVideoUploadRequest, lease: Acc
 
 async def upload_note(request: DouyinNoteUploadRequest) -> Path:
     require_task_delivery()
-    with AccountLease(default_runtime_dir(), "douyin", request.account_name) as lease:
-        return await _upload_note_with_lease(request, lease)
-
-
-async def _upload_note_with_lease(request: DouyinNoteUploadRequest, lease: AccountLease) -> Path:
-    account_file = resolve_account_file("douyin", request.account_name)
-    from uploader.douyin_uploader.main import DouYinNote, douyin_setup
-
-    is_ready = await run_with_lease(lease, lambda: douyin_setup(str(account_file), handle=False))
-    if not is_ready:
-        raise RuntimeError(
-            f"Douyin cookie is missing or expired: {account_file}. Run `sau douyin login --account {request.account_name}` first."
-        )
-
-    app = DouYinNote(
-        image_paths=[str(path) for path in request.image_files],
-        title=request.title,
-        note=request.note,
-        tags=request.tags,
-        publish_date=request.publish_date,
-        account_file=str(account_file),
-        publish_strategy=request.publish_strategy,
-        debug=request.debug,
-        headless=request.headless,
-        bgm=request.bgm,
-    )
-    await run_with_lease(lease, app.douyin_upload_note)
-    return account_file
 
 
 async def upload_kuaishou_video(request: KuaishouVideoUploadRequest) -> Path:
@@ -551,34 +523,6 @@ async def _upload_xiaohongshu_video_with_lease(request: XiaohongshuVideoUploadRe
 
 async def upload_xiaohongshu_note(request: XiaohongshuNoteUploadRequest) -> Path:
     require_task_delivery()
-    with AccountLease(default_runtime_dir(), "xiaohongshu", request.account_name) as lease:
-        return await _upload_xiaohongshu_note_with_lease(request, lease)
-
-
-async def _upload_xiaohongshu_note_with_lease(request: XiaohongshuNoteUploadRequest, lease: AccountLease) -> Path:
-    account_file = resolve_account_file("xiaohongshu", request.account_name)
-    from uploader.xiaohongshu_uploader.main import XiaoHongShuNote, xiaohongshu_setup
-
-    is_ready = await run_with_lease(lease, lambda: xiaohongshu_setup(str(account_file), handle=False))
-    if not is_ready:
-        raise RuntimeError(
-            f"Xiaohongshu cookie is missing or expired: {account_file}. Run `sau xiaohongshu login --account {request.account_name}` first."
-        )
-
-    app = XiaoHongShuNote(
-        image_paths=[str(path) for path in request.image_files],
-        title=request.title,
-        desc=request.note,
-        note=request.note,
-        tags=request.tags,
-        publish_date=request.publish_date,
-        account_file=str(account_file),
-        publish_strategy=request.publish_strategy,
-        debug=request.debug,
-        headless=request.headless,
-    )
-    await run_with_lease(lease, app.main)
-    return account_file
 
 
 async def upload_bilibili_video(request: BilibiliVideoUploadRequest) -> Path:
