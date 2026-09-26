@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 **来源:** 《三平台个人账号无人值守发布》规格；用户故事 1、2、3；代码审计需求 R01。
 

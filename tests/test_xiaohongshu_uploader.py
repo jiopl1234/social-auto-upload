@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from patchright.async_api import async_playwright
+
 import uploader.xiaohongshu_uploader.main as xhs_main
 
 
@@ -218,33 +220,35 @@ class XiaohongshuUploaderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 asyncio.run(app.validate_upload_args())
 
-    def test_video_fill_meta_uses_desc_then_first_tag(self):
-        app = xhs_main.XiaoHongShuVideo(
-            title="标题内容",
-            file_path="demo.mp4",
-            tags=["话题1"],
-            publish_date=0,
-            account_file="account.json",
-            desc="描述内容",
-        )
-        page = RecordingPage()
-
-        asyncio.run(app.fill_meta(page))
-
-        self.assertEqual(
-            page.locators['input[placeholder*="填写标题"]'].actions,
-            [("fill", "标题内容")],
-        )
-        self.assertEqual(
-            page.locators['p[data-placeholder*="输入正文描述"]'].actions,
-            [("click",)],
-        )
-        self.assertIn(("type", "描述内容", None), page.keyboard.actions)
-        self.assertIn(("type", "#话题1", 30), page.keyboard.actions)
-        self.assertEqual(
-            page.locators['#creator-editor-topic-container .item'].actions,
-            [("wait_for", {"state": "visible", "timeout": 2000}), ("click",)],
-        )
+    def test_video_fill_meta_preserves_description_and_selects_topic(self):
+        async def scenario():
+            app = xhs_main.XiaoHongShuVideo(
+                title="标题内容", file_path="demo.mp4", tags=["话题1"],
+                publish_date=0, account_file="account.json", desc="描述内容",
+            )
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=True, channel="chrome")
+                try:
+                    page = await browser.new_page()
+                    await page.set_content("""
+                        <input placeholder="填写标题">
+                        <div id="editor" contenteditable="true">
+                          <p data-placeholder="输入正文描述"><br></p>
+                        </div>
+                        <div id="creator-editor-topic-container">
+                          <button class="item" onclick="document.querySelector('#selected-topic').textContent = this.textContent">话题1</button>
+                        </div>
+                        <output id="selected-topic"></output>
+                    """)
+                    await app.fill_meta(page)
+                    self.assertEqual(await page.locator("input").input_value(), "标题内容")
+                    self.assertEqual(await page.locator("#selected-topic").inner_text(), "话题1")
+                    body = await page.locator("#editor").inner_text()
+                    self.assertIn("描述内容", body)
+                    self.assertIn("#话题1", body)
+                finally:
+                    await browser.close()
+        asyncio.run(scenario())
 
     def test_video_fill_meta_can_fill_first_tag_without_desc(self):
         app = xhs_main.XiaoHongShuVideo(

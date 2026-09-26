@@ -36,7 +36,25 @@ uv venv
 source .venv/bin/activate
 ```
 
-### 3. 安装主线依赖
+### 3. 初始化本地配置
+
+首次安装前，从示例创建本地配置；已有 `conf.py` 时保留自己的配置。
+
+Windows PowerShell：
+
+```powershell
+if (-not (Test-Path conf.py)) { Copy-Item conf.example.py conf.py }
+```
+
+Linux / macOS：
+
+```bash
+test -f conf.py || cp conf.example.py conf.py
+```
+
+配置先于 editable 安装创建，确保在仓库外使用 `sau` 时也能解析本地配置。常用配置项为 `LOCAL_CHROME_PATH`、`LOCAL_CHROME_HEADLESS` 和 `DEBUG_MODE`；`XHS_SERVER` 只用于旧小红书流程。
+
+### 4. 安装主线依赖
 
 当前主线依赖已经放到 `pyproject.toml`，推荐直接执行：
 
@@ -46,7 +64,17 @@ uv pip install -e .
 
 安装完成后，会注册 `sau` 命令。
 
-### 4. 安装 patchright Chromium
+抖音、小红书浏览器版、视频号、快手和 YouTube 使用主线 Patchright。CLI 按实际命令加载对应上传器；帮助和不存在账号的检查不启动浏览器。
+
+百家号、支付宝、微博、虎扑等仍依赖 Playwright 的入口，额外安装兼容依赖：
+
+```bash
+uv pip install -e ".[legacy]"
+```
+
+`legacy` 采用历史兼容路径的 Playwright 版本，不改变主线 Patchright 依赖。实际使用这些入口时还需按其平台说明准备对应浏览器。
+
+### 5. 安装 patchright Chromium
 
 当前主线使用 `patchright` 驱动浏览器。
 
@@ -64,24 +92,6 @@ Linux / macOS：
 PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright" patchright install chromium
 ```
 
-### 5. 配置 conf.py
-
-复制一份配置：
-
-```bash
-cp conf.example.py conf.py
-```
-
-Windows 也可以直接手动复制并重命名。
-
-当前通常还会用到这些配置项：
-
-- `LOCAL_CHROME_PATH`
-- `LOCAL_CHROME_HEADLESS`
-- `DEBUG_MODE`
-
-`XHS_SERVER` 目前只和小红书旧流程相关。
-
 ### 6. 验证 CLI 是否可用
 
 ```bash
@@ -89,6 +99,7 @@ sau --help
 sau douyin --help
 sau kuaishou --help
 sau xiaohongshu --help
+sau tencent --help
 sau bilibili --help
 ```
 

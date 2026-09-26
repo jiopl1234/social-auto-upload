@@ -1,0 +1,60 @@
+{
+  "scope": "fresh editable install with conf initialized before install, commands launched outside checkout",
+  "core_without_legacy_playwright": true,
+  "checks": [
+    {
+      "platform": "douyin",
+      "action": "--help",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "platform": "douyin",
+      "action": "check",
+      "returncode": 1,
+      "passed": true
+    },
+    {
+      "platform": "douyin",
+      "action": "upload-video",
+      "returncode": 1,
+      "passed": true
+    },
+    {
+      "platform": "xiaohongshu",
+      "action": "--help",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "platform": "xiaohongshu",
+      "action": "check",
+      "returncode": 1,
+      "passed": true
+    },
+    {
+      "platform": "xiaohongshu",
+      "action": "upload-video",
+      "returncode": 1,
+      "passed": true
+    },
+    {
+      "platform": "tencent",
+      "action": "--help",
+      "returncode": 0,
+      "passed": true
+    },
+    {
+      "platform": "tencent",
+      "action": "check",
+      "returncode": 1,
+      "passed": true
+    },
+    {
+      "platform": "tencent",
+      "action": "upload-video",
+      "returncode": 1,
+      "passed": true
+    }
+  ]
+}

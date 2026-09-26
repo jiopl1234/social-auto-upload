@@ -1,7 +1,9 @@
 import asyncio
+import io
 import tempfile
 import unittest
 from argparse import Namespace
+from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -18,21 +20,17 @@ class BilibiliCliTests(unittest.TestCase):
 
     def test_build_parser_requires_tid_for_upload_video(self):
         parser = sau_cli.build_parser()
-        with self.assertRaises(SystemExit):
-            parser.parse_args(
-                [
-                    "bilibili",
-                    "upload-video",
-                    "--account",
-                    "creator",
-                    "--file",
-                    "demo.mp4",
-                    "--title",
-                    "hello",
-                    "--desc",
-                    "hello",
-                ]
-            )
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "demo.mp4"
+            video.write_bytes(b"video")
+            stderr = io.StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                parser.parse_args(
+                    ["bilibili", "upload-video", "--account", "creator", "--file", str(video),
+                     "--title", "hello", "--desc", "hello"]
+                )
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("--tid", stderr.getvalue())
 
     def test_dispatch_bilibili_check_prints_valid(self):
         args = Namespace(platform="bilibili", action="check", account="creator")
@@ -52,7 +50,7 @@ class BilibiliCliTests(unittest.TestCase):
             account_file = Path(temp_dir) / "account.json"
             account_file.write_text("{}", encoding="utf-8")
             request = sau_cli.BilibiliVideoUploadRequest("creator", Path("demo.mp4"), "hello", "hello", 249, ["test"], 0, Path("cover.png"))
-            with patch("sau_cli.resolve_account_file", return_value=account_file), patch("sau_cli.run_biliup_command", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run_biliup:
+            with patch("sau_cli.resolve_account_file", return_value=account_file), patch("uploader.bilibili_uploader.runtime.run_biliup_command", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")) as run_biliup:
                 asyncio.run(sau_cli.upload_bilibili_video(request))
         self.assertIn("--cover", run_biliup.call_args.args[0])
         self.assertIn("cover.png", run_biliup.call_args.args[0])

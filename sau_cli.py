@@ -6,67 +6,12 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, cast
 
 from conf import BASE_DIR
-from uploader.baijiahao_uploader.main import (
-    BaiJiaHaoVideo,
-    baijiahao_setup,
-    cookie_auth as baijiahao_cookie_auth,
-)
-from uploader.alipay_uploader.main import (
-    AlipayVideo,
-    alipay_setup,
-    cookie_auth as alipay_cookie_auth,
-)
-from uploader.bilibili_uploader.runtime import run_biliup_command
-from uploader.douyin_uploader.main import (
-    DOUYIN_PUBLISH_STRATEGY_IMMEDIATE,
-    DOUYIN_PUBLISH_STRATEGY_SCHEDULED,
-    DouYinNote,
-    DouYinVideo,
-    cookie_auth as douyin_cookie_auth,
-    douyin_setup,
-)
-from uploader.ks_uploader.main import (
-    KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE,
-    KUAISHOU_PUBLISH_STRATEGY_SCHEDULED,
-    KSNote,
-    KSVideo,
-    cookie_auth as kuaishou_cookie_auth,
-    ks_setup,
-)
-from uploader.tencent_uploader.main import (
-    TENCENT_PUBLISH_STRATEGY_IMMEDIATE,
-    TENCENT_PUBLISH_STRATEGY_SCHEDULED,
-    TencentVideo,
-    cookie_auth as tencent_cookie_auth,
-    tencent_setup,
-)
-from uploader.weibo_uploader.main import (
-    WeiBoVideo,
-    weibo_setup,
-    cookie_auth as weibo_cookie_auth,
-)
-from uploader.hupu_uploader.main import (
-    HuPuVideo,
-    hupu_setup,
-    cookie_auth as hupu_cookie_auth,
-)
-from uploader.xiaohongshu_uploader.main import (
-    XIAOHONGSHU_PUBLISH_STRATEGY_IMMEDIATE,
-    XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED,
-    XiaoHongShuNote,
-    XiaoHongShuVideo,
-    cookie_auth as xiaohongshu_cookie_auth,
-    xiaohongshu_setup,
-)
-from uploader.youtube_uploader.main import (
-    YouTubeVideo,
-    cookie_auth as youtube_cookie_auth,
-    youtube_setup,
-)
 
+PUBLISH_STRATEGY_IMMEDIATE = "immediate"
+PUBLISH_STRATEGY_SCHEDULED = "scheduled"
 SCHEDULE_FORMAT = "%Y-%m-%d %H:%M"
 
 
@@ -83,7 +28,7 @@ class DouyinVideoUploadRequest:
     thumbnail_portrait_file: Path | None = None
     product_link: str = ""
     product_title: str = ""
-    publish_strategy: str = DOUYIN_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
     declaration: str | None = None
@@ -98,7 +43,7 @@ class DouyinNoteUploadRequest:
     note: str
     tags: list[str]
     publish_date: datetime | int
-    publish_strategy: str = DOUYIN_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
     bgm: str = ""
@@ -113,7 +58,7 @@ class KuaishouVideoUploadRequest:
     tags: list[str]
     publish_date: datetime | int
     thumbnail_file: Path | None = None
-    publish_strategy: str = KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
     collection_name: str | None = None
@@ -127,7 +72,7 @@ class KuaishouNoteUploadRequest:
     note: str
     tags: list[str]
     publish_date: datetime | int
-    publish_strategy: str = KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
 
@@ -141,7 +86,7 @@ class XiaohongshuVideoUploadRequest:
     tags: list[str]
     publish_date: datetime | int
     thumbnail_file: Path | None = None
-    publish_strategy: str = XIAOHONGSHU_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
 
@@ -154,7 +99,7 @@ class XiaohongshuNoteUploadRequest:
     note: str
     tags: list[str]
     publish_date: datetime | int
-    publish_strategy: str = XIAOHONGSHU_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
 
@@ -185,7 +130,7 @@ class TencentVideoUploadRequest:
     short_title: str | None = None
     category: str | None = None
     is_draft: bool = False
-    publish_strategy: str = TENCENT_PUBLISH_STRATEGY_IMMEDIATE
+    publish_strategy: str = PUBLISH_STRATEGY_IMMEDIATE
     debug: bool = True
     headless: bool = True
     collection_name: str | None = None
@@ -294,37 +239,49 @@ def parse_schedule(raw_schedule: str | None) -> datetime | int:
 
 async def login_douyin_account(account_name: str, headless: bool = True) -> dict:
     account_file = resolve_account_file("douyin", account_name)
-    return await douyin_setup(str(account_file), handle=True, return_detail=True, headless=headless)
+    from uploader.douyin_uploader.main import douyin_setup
+
+    return cast(dict, await douyin_setup(str(account_file), handle=True, return_detail=True, headless=headless))
 
 
 async def check_douyin_account(account_name: str) -> bool:
     account_file = resolve_account_file("douyin", account_name)
     if not account_file.exists():
         return False
+    from uploader.douyin_uploader.main import cookie_auth as douyin_cookie_auth
+
     return await douyin_cookie_auth(str(account_file))
 
 
 async def login_kuaishou_account(account_name: str, headless: bool = True) -> dict:
     account_file = resolve_account_file("kuaishou", account_name)
-    return await ks_setup(str(account_file), handle=True, return_detail=True, headless=headless)
+    from uploader.ks_uploader.main import ks_setup
+
+    return cast(dict, await ks_setup(str(account_file), handle=True, return_detail=True, headless=headless))
 
 
 async def check_kuaishou_account(account_name: str) -> bool:
     account_file = resolve_account_file("kuaishou", account_name)
     if not account_file.exists():
         return False
+    from uploader.ks_uploader.main import cookie_auth as kuaishou_cookie_auth
+
     return await kuaishou_cookie_auth(str(account_file))
 
 
 async def login_xiaohongshu_account(account_name: str, headless: bool = True) -> dict:
     account_file = resolve_account_file("xiaohongshu", account_name)
-    return await xiaohongshu_setup(str(account_file), handle=True, return_detail=True, headless=headless)
+    from uploader.xiaohongshu_uploader.main import xiaohongshu_setup
+
+    return cast(dict, await xiaohongshu_setup(str(account_file), handle=True, return_detail=True, headless=headless))
 
 
 async def check_xiaohongshu_account(account_name: str) -> bool:
     account_file = resolve_account_file("xiaohongshu", account_name)
     if not account_file.exists():
         return False
+    from uploader.xiaohongshu_uploader.main import cookie_auth as xiaohongshu_cookie_auth
+
     return await xiaohongshu_cookie_auth(str(account_file))
 
 
@@ -341,6 +298,8 @@ async def login_bilibili_account(account_name: str) -> dict:
             "account_file": str(account_file),
         }
 
+    from uploader.bilibili_uploader.runtime import run_biliup_command
+
     result = run_biliup_command(["-u", str(account_file), "login"], interactive=True)
     success = result.returncode == 0
     return {
@@ -354,36 +313,48 @@ async def check_bilibili_account(account_name: str) -> bool:
     account_file = resolve_account_file("bilibili", account_name)
     if not account_file.exists():
         return False
+    from uploader.bilibili_uploader.runtime import run_biliup_command
+
     result = run_biliup_command(["-u", str(account_file), "renew"])
     return result.returncode == 0
 
 
 async def login_tencent_account(account_name: str, headless: bool = True) -> dict:
     account_file = resolve_account_file("tencent", account_name)
-    return await tencent_setup(str(account_file), handle=True, return_detail=True, headless=headless)
+    from uploader.tencent_uploader.main import tencent_setup
+
+    return cast(dict, await tencent_setup(str(account_file), handle=True, return_detail=True, headless=headless))
 
 
 async def check_tencent_account(account_name: str) -> bool:
     account_file = resolve_account_file("tencent", account_name)
     if not account_file.exists():
         return False
+    from uploader.tencent_uploader.main import cookie_auth as tencent_cookie_auth
+
     return await tencent_cookie_auth(str(account_file))
 
 
 async def login_youtube_account(account_name: str, headless: bool = False) -> dict:
     account_file = resolve_account_file("youtube", account_name)
-    return await youtube_setup(str(account_file), handle=True, return_detail=True, headless=headless)
+    from uploader.youtube_uploader.main import youtube_setup
+
+    return cast(dict, await youtube_setup(str(account_file), handle=True, return_detail=True, headless=headless))
 
 
 async def check_youtube_account(account_name: str) -> bool:
     account_file = resolve_account_file("youtube", account_name)
     if not account_file.exists():
         return False
+    from uploader.youtube_uploader.main import cookie_auth as youtube_cookie_auth
+
     return await youtube_cookie_auth(str(account_file))
 
 
 async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
     account_file = resolve_account_file("youtube", request.account_name)
+    from uploader.youtube_uploader.main import YouTubeVideo, youtube_setup
+
     is_ready = await youtube_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -408,6 +379,8 @@ async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
 
 async def upload_video(request: DouyinVideoUploadRequest) -> Path:
     account_file = resolve_account_file("douyin", request.account_name)
+    from uploader.douyin_uploader.main import DouYinVideo, douyin_setup
+
     is_ready = await douyin_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -441,6 +414,8 @@ async def upload_video(request: DouyinVideoUploadRequest) -> Path:
 
 async def upload_note(request: DouyinNoteUploadRequest) -> Path:
     account_file = resolve_account_file("douyin", request.account_name)
+    from uploader.douyin_uploader.main import DouYinNote, douyin_setup
+
     is_ready = await douyin_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -465,6 +440,8 @@ async def upload_note(request: DouyinNoteUploadRequest) -> Path:
 
 async def upload_kuaishou_video(request: KuaishouVideoUploadRequest) -> Path:
     account_file = resolve_account_file("kuaishou", request.account_name)
+    from uploader.ks_uploader.main import KSVideo, ks_setup
+
     is_ready = await ks_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -490,6 +467,8 @@ async def upload_kuaishou_video(request: KuaishouVideoUploadRequest) -> Path:
 
 async def upload_kuaishou_note(request: KuaishouNoteUploadRequest) -> Path:
     account_file = resolve_account_file("kuaishou", request.account_name)
+    from uploader.ks_uploader.main import KSNote, ks_setup
+
     is_ready = await ks_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -513,6 +492,8 @@ async def upload_kuaishou_note(request: KuaishouNoteUploadRequest) -> Path:
 
 async def upload_xiaohongshu_video(request: XiaohongshuVideoUploadRequest) -> Path:
     account_file = resolve_account_file("xiaohongshu", request.account_name)
+    from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo, xiaohongshu_setup
+
     is_ready = await xiaohongshu_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -537,6 +518,8 @@ async def upload_xiaohongshu_video(request: XiaohongshuVideoUploadRequest) -> Pa
 
 async def upload_xiaohongshu_note(request: XiaohongshuNoteUploadRequest) -> Path:
     account_file = resolve_account_file("xiaohongshu", request.account_name)
+    from uploader.xiaohongshu_uploader.main import XiaoHongShuNote, xiaohongshu_setup
+
     is_ready = await xiaohongshu_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -585,6 +568,8 @@ async def upload_bilibili_video(request: BilibiliVideoUploadRequest) -> Path:
     if isinstance(request.publish_date, datetime):
         arguments.extend(["--dtime", str(int(request.publish_date.timestamp()))])
 
+    from uploader.bilibili_uploader.runtime import run_biliup_command
+
     result = run_biliup_command(arguments)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "").strip() or "Bilibili upload failed")
@@ -593,6 +578,8 @@ async def upload_bilibili_video(request: BilibiliVideoUploadRequest) -> Path:
 
 async def upload_tencent_video(request: TencentVideoUploadRequest) -> Path:
     account_file = resolve_account_file("tencent", request.account_name)
+    from uploader.tencent_uploader.main import TencentVideo, tencent_setup
+
     is_ready = await tencent_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -628,18 +615,24 @@ async def upload_tencent_video(request: TencentVideoUploadRequest) -> Path:
 
 async def login_baijiahao_account(account_name: str, headless: bool = True, qrcode_callback=None) -> dict:
     account_file = resolve_account_file("baijiahao", account_name)
-    return await baijiahao_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback)
+    from uploader.baijiahao_uploader.main import baijiahao_setup
+
+    return cast(dict, await baijiahao_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback))
 
 
 async def check_baijiahao_account(account_name: str) -> bool:
     account_file = resolve_account_file("baijiahao", account_name)
     if not account_file.exists():
         return False
+    from uploader.baijiahao_uploader.main import cookie_auth as baijiahao_cookie_auth
+
     return await baijiahao_cookie_auth(str(account_file))
 
 
 async def upload_baijiahao_video(request: BaijiahaoVideoUploadRequest) -> Path:
     account_file = resolve_account_file("baijiahao", request.account_name)
+    from uploader.baijiahao_uploader.main import BaiJiaHaoVideo, baijiahao_setup
+
     is_ready = await baijiahao_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -663,18 +656,24 @@ async def upload_baijiahao_video(request: BaijiahaoVideoUploadRequest) -> Path:
 
 async def login_alipay_account(account_name: str, headless: bool = True, qrcode_callback=None) -> dict:
     account_file = resolve_account_file("alipay", account_name)
-    return await alipay_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback)
+    from uploader.alipay_uploader.main import alipay_setup
+
+    return cast(dict, await alipay_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback))
 
 
 async def check_alipay_account(account_name: str) -> bool:
     account_file = resolve_account_file("alipay", account_name)
     if not account_file.exists():
         return False
+    from uploader.alipay_uploader.main import cookie_auth as alipay_cookie_auth
+
     return await alipay_cookie_auth(str(account_file))
 
 
 async def upload_alipay_video(request: AlipayVideoUploadRequest) -> Path:
     account_file = resolve_account_file("alipay", request.account_name)
+    from uploader.alipay_uploader.main import AlipayVideo, alipay_setup
+
     is_ready = await alipay_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -698,18 +697,24 @@ async def upload_alipay_video(request: AlipayVideoUploadRequest) -> Path:
 
 async def login_weibo_account(account_name: str, headless: bool = True, qrcode_callback=None) -> dict:
     account_file = resolve_account_file("weibo", account_name)
-    return await weibo_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback)
+    from uploader.weibo_uploader.main import weibo_setup
+
+    return cast(dict, await weibo_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback))
 
 
 async def check_weibo_account(account_name: str) -> bool:
     account_file = resolve_account_file("weibo", account_name)
     if not account_file.exists():
         return False
+    from uploader.weibo_uploader.main import cookie_auth as weibo_cookie_auth
+
     return await weibo_cookie_auth(str(account_file))
 
 
 async def upload_weibo_video(request: WeiboVideoUploadRequest) -> Path:
     account_file = resolve_account_file("weibo", request.account_name)
+    from uploader.weibo_uploader.main import WeiBoVideo, weibo_setup
+
     is_ready = await weibo_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -733,18 +738,24 @@ async def upload_weibo_video(request: WeiboVideoUploadRequest) -> Path:
 
 async def login_hupu_account(account_name: str, headless: bool = False, qrcode_callback=None) -> dict:
     account_file = resolve_account_file("hupu", account_name)
-    return await hupu_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback)
+    from uploader.hupu_uploader.main import hupu_setup
+
+    return cast(dict, await hupu_setup(str(account_file), handle=True, return_detail=True, headless=headless, qrcode_callback=qrcode_callback))
 
 
 async def check_hupu_account(account_name: str) -> bool:
     account_file = resolve_account_file("hupu", account_name)
     if not account_file.exists():
         return False
+    from uploader.hupu_uploader.main import cookie_auth as hupu_cookie_auth
+
     return await hupu_cookie_auth(str(account_file))
 
 
 async def upload_hupu_video(request: HupuVideoUploadRequest) -> Path:
     account_file = resolve_account_file("hupu", request.account_name)
+    from uploader.hupu_uploader.main import HuPuVideo, hupu_setup
+
     is_ready = await hupu_setup(str(account_file), handle=False)
     if not is_ready:
         raise RuntimeError(
@@ -1050,7 +1061,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             print("valid" if is_valid else "invalid")
             return 0 if is_valid else 1
 
-        publish_strategy = DOUYIN_PUBLISH_STRATEGY_SCHEDULED if args.schedule else DOUYIN_PUBLISH_STRATEGY_IMMEDIATE
+        publish_strategy = PUBLISH_STRATEGY_SCHEDULED if args.schedule else PUBLISH_STRATEGY_IMMEDIATE
 
         if args.action == "upload-video":
             request = DouyinVideoUploadRequest(
@@ -1116,7 +1127,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             print("valid" if is_valid else "invalid")
             return 0 if is_valid else 1
 
-        publish_strategy = KUAISHOU_PUBLISH_STRATEGY_SCHEDULED if args.schedule else KUAISHOU_PUBLISH_STRATEGY_IMMEDIATE
+        publish_strategy = PUBLISH_STRATEGY_SCHEDULED if args.schedule else PUBLISH_STRATEGY_IMMEDIATE
 
         if args.action == "upload-video":
             request = KuaishouVideoUploadRequest(
@@ -1168,7 +1179,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             return 0 if is_valid else 1
 
         publish_strategy = (
-            XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED if args.schedule else XIAOHONGSHU_PUBLISH_STRATEGY_IMMEDIATE
+            PUBLISH_STRATEGY_SCHEDULED if args.schedule else PUBLISH_STRATEGY_IMMEDIATE
         )
 
         if args.action == "upload-video":
@@ -1257,7 +1268,7 @@ async def dispatch(args: argparse.Namespace) -> int:
             print("valid" if is_valid else "invalid")
             return 0 if is_valid else 1
 
-        publish_strategy = TENCENT_PUBLISH_STRATEGY_SCHEDULED if args.schedule else TENCENT_PUBLISH_STRATEGY_IMMEDIATE
+        publish_strategy = PUBLISH_STRATEGY_SCHEDULED if args.schedule else PUBLISH_STRATEGY_IMMEDIATE
 
         if args.action == "upload-video":
             request = TencentVideoUploadRequest(

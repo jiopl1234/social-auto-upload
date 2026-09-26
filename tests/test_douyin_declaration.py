@@ -29,12 +29,25 @@ class DouyinDeclarationTests(unittest.TestCase):
         self.assertFalse(video.debug)
         self.assertFalse(video.headless)
         self.assertIsNone(video.declaration)
+        self.assertIsNone(video.collection_name)
 
     def test_apply_declaration_skips_when_unspecified(self):
         video = DouYinVideo("标题", "/tmp/demo.mp4", [], 0, "/tmp/cookie.json")
         video.set_self_declaration = AsyncMock()
         asyncio.run(video.apply_self_declaration(object()))
         video.set_self_declaration.assert_not_awaited()
+
+    def test_legacy_runtime_arguments_allow_collection_by_keyword(self):
+        video = DouYinVideo(
+            "标题", "/tmp/demo.mp4", [], 0, "/tmp/cookie.json",
+            None, "", "", None, "", "scheduled", False, False, "已确认声明原文",
+            collection_name="系列 A",
+        )
+        self.assertEqual(video.publish_strategy, "scheduled")
+        self.assertFalse(video.debug)
+        self.assertFalse(video.headless)
+        self.assertEqual(video.declaration, "已确认声明原文")
+        self.assertEqual(video.collection_name, "系列 A")
 
     def test_apply_declaration_uses_exact_explicit_text(self):
         page = object()
@@ -68,10 +81,13 @@ class DouyinDeclarationTests(unittest.TestCase):
         locator = MagicMock()
         locator.set_input_files = AsyncMock()
         locator.count = AsyncMock(return_value=1)
+        locator.wait_for = AsyncMock()
+        locator.first = locator
         page = MagicMock()
         page.goto = AsyncMock()
         page.wait_for_url = AsyncMock()
         page.wait_for_selector = AsyncMock()
+        page.wait_for_timeout = AsyncMock()
         page.locator.return_value = locator
 
         context = MagicMock()
