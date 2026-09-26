@@ -277,3 +277,96 @@ class Store:
                 "SELECT * FROM attempts WHERE job_id = ? ORDER BY started_at, attempt_id", (job_id,)
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def queued_jobs(self) -> list[dict]:
+        with self.transaction() as connection:
+            rows = connection.execute(
+                """SELECT j.* FROM jobs j LEFT JOIN accounts a
+                   ON a.platform = j.platform AND a.account = j.account
+                   WHERE j.status = 'QUEUED' AND (a.status IS NULL OR a.status = 'READY')
+                   ORDER BY j.created_at, j.job_id"""
+            ).fetchall()
+            return [self._job_from_row(row) for row in rows]
+
+    def claim(self, job_id: str, owner_token: str) -> dict | None:
+        with self.transaction() as connection:
+            job = self._job_row(connection, job_id)
+            account = connection.execute(
+                "SELECT status FROM accounts WHERE platform = ? AND account = ?",
+                (job["platform"], job["account"]),
+            ).fetchone()
+            if job["status"] != "QUEUED" or (account and account["status"] != "READY"):
+                return None
+            attempt_id, now = uuid4().hex, _utc_now()
+            connection.execute(
+                "INSERT INTO attempts (attempt_id, job_id, status, started_at, owner_token) VALUES (?, ?, 'PREPARING', ?, ?)",
+                (attempt_id, job_id, now, owner_token),
+            )
+            connection.execute(
+                "UPDATE jobs SET status = 'PREPARING', attempt_id = ?, updated_at = ? WHERE job_id = ?",
+                (attempt_id, now, job_id),
+            )
+            connection.execute(
+                "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, 'PREPARING', 'prepare', ?, '{}')",
+                (job_id, attempt_id, now),
+            )
+            return self._job_from_row(self._job_row(connection, job_id))
+
+    @staticmethod
+    def _require_owner(connection: sqlite3.Connection, job_id: str, owner_token: str) -> None:
+        current = connection.execute(
+            """SELECT a.owner_token, a.finished_at FROM jobs j JOIN attempts a
+               ON a.attempt_id = j.attempt_id AND a.job_id = j.job_id WHERE j.job_id = ?""",
+            (job_id,),
+        ).fetchone()
+        if current is None or current["owner_token"] != owner_token or current["finished_at"] is not None:
+            raise TaskError("OWNERSHIP_LOST", "This executor no longer owns the active attempt")
+
+    def assert_owner(self, job_id: str, owner_token: str) -> None:
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+
+    def finish_preparation(self, job_id: str, owner_token: str, *, status: str, metadata=None, error=None, warnings=None, pause_reason=None) -> dict:
+        if status not in {"READY", "FAILED_PRE_SUBMIT", "BLOCKED"}:
+            raise TaskError("INVALID_STATE", "Invalid preparation result")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            if job["status"] != "PREPARING":
+                raise TaskError("INVALID_STATE", "Task is not preparing")
+            now = _utc_now()
+            connection.execute(
+                """UPDATE jobs SET status = ?, actual_metadata_json = ?, error_json = ?, warnings_json = ?, updated_at = ?
+                   WHERE job_id = ?""",
+                (status, _canonical_json(metadata) if metadata is not None else None,
+                 _canonical_json(error) if error is not None else None, _canonical_json(warnings or []), now, job_id),
+            )
+            connection.execute(
+                "UPDATE attempts SET status = ?, finished_at = ? WHERE attempt_id = ?",
+                (status, now, job["attempt_id"]),
+            )
+            connection.execute(
+                "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, 'prepare', ?, ?)",
+                (job_id, job["attempt_id"], status, now, _canonical_json({"error": error})),
+            )
+            if pause_reason is not None:
+                self._pause_account(connection, job["platform"], job["account"], pause_reason)
+            return self._job_from_row(self._job_row(connection, job_id))
+
+    def pause_account(self, platform: str, account: str, reason: dict) -> None:
+        with self.transaction() as connection:
+            self._pause_account(connection, platform, account, reason)
+
+    @staticmethod
+    def _pause_account(connection: sqlite3.Connection, platform: str, account: str, reason: dict) -> None:
+        connection.execute(
+            """INSERT INTO accounts (platform, account, status, pause_reason, updated_at) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(platform, account) DO UPDATE SET status = excluded.status,
+               pause_reason = excluded.pause_reason, updated_at = excluded.updated_at""",
+            (platform, account, reason["code"], _canonical_json(reason), _utc_now()),
+        )
+
+    def accounts(self) -> list[dict]:
+        with self.transaction() as connection:
+            rows = connection.execute("SELECT * FROM accounts ORDER BY platform, account").fetchall()
+            return [{**dict(row), "pause_reason": self._decode(row["pause_reason"])} for row in rows]

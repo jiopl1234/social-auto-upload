@@ -153,3 +153,28 @@ def test_machine_help_is_also_one_json_value(tmp_path):
         assert result["status"] == "HELP"
         assert "enqueue" in result["help"]
     assert not db.exists()
+
+
+def test_account_pause_reason_is_queryable_from_machine_cli(tmp_path):
+    from orchestrator.service import TaskService
+
+    database = tmp_path / "jobs.sqlite3"
+    service = TaskService(database, runtime_dir=tmp_path / "runtime")
+    # Simulates a platform challenge through the public worker boundary.
+    import asyncio
+    from orchestrator.errors import TaskError
+
+    class Challenge:
+        async def prepare(self, context):
+            raise TaskError("AUTH_REQUIRED", "Verification is required")
+
+        async def close(self):
+            pass
+
+    path = write_manifest(tmp_path)
+    service.enqueue(json.loads(path.read_text(encoding="utf-8")))
+    asyncio.run(service.run_once(adapters={"douyin": Challenge()}))
+    completed, result = run_jobs(database, "accounts")
+    assert completed.returncode == 0
+    assert result["accounts"][0]["status"] == "AUTH_REQUIRED"
+    assert result["accounts"][0]["pause_reason"]["code"] == "AUTH_REQUIRED"

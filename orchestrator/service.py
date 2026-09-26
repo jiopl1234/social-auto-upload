@@ -11,8 +11,11 @@ from orchestrator.store import Store
 class TaskService:
     """Public task interface shared by the CLI and local integrations."""
 
-    def __init__(self, database: str | Path):
+    def __init__(self, database: str | Path, *, runtime_dir: Path | None = None):
+        from orchestrator.ownership import default_runtime_dir
+
         self.store = Store(database)
+        self.runtime_dir = runtime_dir if runtime_dir is not None else default_runtime_dir()
 
     def enqueue(self, manifest: dict[str, Any]) -> dict:
         if not isinstance(manifest, dict):
@@ -47,3 +50,24 @@ class TaskService:
 
     def attempts(self, job_id: str) -> list[dict]:
         return self.store.attempts(job_id)
+
+    async def run_once(self, *, adapters, job_id: str | None = None) -> dict | None:
+        from orchestrator.worker import run_once
+
+        return await run_once(self.store, self.runtime_dir, adapters, job_id)
+
+    async def run_pending(self, *, adapters) -> list[dict]:
+        completed = []
+        while True:
+            result = await self.run_once(adapters=adapters)
+            if result is None:
+                return completed
+            completed.append(result)
+
+    def accounts(self) -> list[dict]:
+        return self.store.accounts()
+
+    def maintenance(self, platform: str, account: str):
+        from orchestrator.ownership import AccountLease
+
+        return AccountLease(self.runtime_dir, platform, account)

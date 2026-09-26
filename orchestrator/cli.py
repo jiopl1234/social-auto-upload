@@ -10,6 +10,7 @@ from orchestrator.errors import TaskError
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db", type=Path, default=Path.home() / ".sau" / "tasks.sqlite3")
+    parser.add_argument("--runtime-dir", type=Path, help="Shared account-lock directory for all local task databases")
     parser.add_argument("--json", action="store_true", help="Emit one structured JSON result")
     actions = parser.add_subparsers(dest="action", required=True)
     enqueue = actions.add_parser("enqueue", help="Persist one delivery without publishing")
@@ -17,6 +18,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     for action in ("status", "events", "attempts"):
         actions.add_parser(action).add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
+    actions.add_parser("accounts", help="Query account status and pause reasons")
     run = actions.add_parser("run", help="Execute queued tasks when an adapter is available")
     run.add_argument("--job", dest="job_id")
 
@@ -30,7 +32,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     from orchestrator.service import TaskService
 
     try:
-        service = TaskService(args.db)
+        service = TaskService(args.db, runtime_dir=args.runtime_dir)
         if args.action == "enqueue":
             try:
                 manifest = json.loads(args.manifest.read_text(encoding="utf-8-sig"))
@@ -45,8 +47,12 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = {"job_id": args.job_id, "attempts": service.attempts(args.job_id)}
         elif args.action == "list":
             result = {"jobs": service.list_jobs()}
+        elif args.action == "accounts":
+            result = {"accounts": service.accounts()}
         elif args.action == "run":
-            raise TaskError("UNSUPPORTED", "Task execution is not connected yet")
+            if args.job_id is None:
+                raise TaskError("UNSUPPORTED", "No platform task adapters are connected yet")
+            result = await service.run_once(adapters={}, job_id=args.job_id)
         else:
             raise TaskError("INVALID_INPUT", "Unknown task action", field="action")
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))

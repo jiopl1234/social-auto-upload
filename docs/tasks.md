@@ -1,6 +1,6 @@
 # 持久发布任务
 
-任务接口使用独立的 SQLite 数据库保存交付意图和事件。当前已实现入队、查询和交付键去重；平台执行能力会随 tracker 的后续任务接入。`QUEUED` 只表示已保存，不表示已发布。
+任务接口使用独立的 SQLite 数据库保存交付意图和事件。当前已实现入队、查询、交付键去重及串行准备流程；平台执行能力会随 tracker 的后续任务接入。`QUEUED` 只表示已保存，不表示已发布。
 
 ## 命令
 
@@ -12,6 +12,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json status <job_id>
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json events <job_id>
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json attempts <job_id>
 sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json list
+sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 ```
 
 省略 `--db` 时使用当前用户的 `~/.sau/tasks.sqlite3`。命令选项 `--db`、`--json` 放在动作名称前。
@@ -46,7 +47,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json list
 |---|---|
 | `job_id` | 一个平台、账号、交付键上的持久交付意图；重试不更换 |
 | `attempt_id` | 某次执行的标识；尚未领取时为 null |
-| `status` | QUEUED、PREPARING、READY、SUBMITTING、UNKNOWN_COMMIT、COMPLETED、FAILED_PRE_SUBMIT、BLOCKED、CANCELLED；当前入队阶段只生成 QUEUED |
+| `status` | QUEUED、PREPARING、READY、SUBMITTING、UNKNOWN_COMMIT、COMPLETED、FAILED_PRE_SUBMIT、BLOCKED、CANCELLED；当前执行准备流程可到 READY、FAILED_PRE_SUBMIT 或 BLOCKED |
 | `submission` | NOT_SUBMITTED、MAY_HAVE_SUBMITTED、CONFIRMED；只有正向回执或作品证据才可确认 |
 | `platform_result` | ACCEPTED、IN_REVIEW、PUBLISHED、REJECTED、DRAFT；尚无证据时为 null，与任务是否执行结束分开 |
 | `verified_at` | 最近一次作品证据的核实时间；入队时间不能替代此字段 |
@@ -67,3 +68,13 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json list
 | 5 | 不支持或尚未接入的能力 |
 
 当前 `run` 返回明确的未接入错误，不调用旧上传流程。任务、尝试、事件和账号绑定使用真实数据库；创建任务与初始事件处于同一事务。升级发现较新数据库版本时拒绝操作，避免静默覆盖。
+
+## 执行器与账号维护
+
+Python 公共接口 `TaskService(database, runtime_dir=...)` 提供 `run_once(adapters=..., job_id=...)` 和串行 `run_pending(adapters=...)`。适配器通过 `prepare(context)` 填写内容并返回实际元数据，通过 `close()` 清理资源。当前阶段只推进到准备结果，`READY` 没有平台成功含义；最终提交和只读核对由后续票接入。
+
+每次领取建立一个 attempt，并在同一事务内更新任务和事件。适配器每次写入前可调用 `context.assert_owner()`；最终提交也必须通过此所有权检查。创建浏览器前调用 `resources_started()`，成功回收后才能调用 `resources_closed()`；可用 `register_process(pid)` 登记子进程并在关闭时验证其退出。资源关闭不明会阻断账号。`AUTH_REQUIRED`、`IDENTITY_MISMATCH`、`UI_CHANGED` 等暂停原因可通过 `accounts` 查询；同账号后续任务保持排队，其他平台继续执行。
+
+所有本机进程与数据库必须共用一个运行目录。默认是 `~/.sau/runtime`，可以统一设置 `SAU_RUNTIME_DIR`；测试或明确隔离的部署可使用 `--runtime-dir` / Python `runtime_dir`。首版每个平台一个账号，因此锁以平台为粒度，避免同一账号的不同别名或数据库绕过互斥。维护接口 `service.maintenance(platform, account)` 使用相同的操作系统锁。
+
+锁文件不会按时间删除或过期。旧进程存活、身份无法确认、浏览器关闭未确认时均拒绝接管；不要通过删除运行目录或切换运行目录解决账号繁忙。崩溃后的恢复策略将在提交边界票中接入。
