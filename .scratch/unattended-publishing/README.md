@@ -6,7 +6,7 @@ Tracker: local Markdown
 
 | 票号 | 任务 | 状态 |
 |---|---|---|
-| 01 | [干净安装后可运行三平台 CLI，并恢复旧参数语义](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/01-runnable-cli-and-compatibility.md) | in-progress |
+| 01 | [干净安装后可运行三平台 CLI，并恢复旧参数语义](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/01-runnable-cli-and-compatibility.md) | done |
 | 02 | [提交清单后获得可持久查询、可去重的单平台任务](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/02-durable-job-intake-and-query.md) | ready-for-agent |
 | 03 | [串行执行任务，同账号只允许一个写入者](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/03-single-writer-job-execution.md) | ready-for-agent |
 | 04 | [发布前验证不可变清单、素材版本和声明事实](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/04-immutable-content-preflight.md) | ready-for-agent |
@@ -22,6 +22,8 @@ Tracker: local Markdown
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | ready-for-agent |
 | 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | ready-for-agent |
 
-首次 frontier：01。每票验收结果以其自身记录为准；当前没有完成的实现票。
+当前 frontier：02。01 已完成安装、兼容和测试基线，并通过双线审查；其余 14 张票尚未实现。每票验收结果以其自身记录为准。
+
+01 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-review.md)。未进行真实账号发布测试，整个方案尚未达到无人值守生产验收状态。
 
 历史草稿继续留存供审计；本目录为正式跟踪位置。
