@@ -11,6 +11,7 @@ from typing import Iterable, Sequence, cast
 from conf import BASE_DIR
 from orchestrator.legacy_resources import run_with_lease
 from orchestrator.ownership import AccountLease, default_runtime_dir
+from orchestrator.platforms.legacy import require_task_delivery
 
 PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 PUBLISH_STRATEGY_SCHEDULED = "scheduled"
@@ -392,6 +393,7 @@ async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
 
 
 async def upload_video(request: DouyinVideoUploadRequest) -> Path:
+    require_task_delivery()
     with AccountLease(default_runtime_dir(), "douyin", request.account_name) as lease:
         return await _upload_video_with_lease(request, lease)
 
@@ -515,6 +517,7 @@ async def upload_kuaishou_note(request: KuaishouNoteUploadRequest) -> Path:
 
 
 async def upload_xiaohongshu_video(request: XiaohongshuVideoUploadRequest) -> Path:
+    require_task_delivery()
     with AccountLease(default_runtime_dir(), "xiaohongshu", request.account_name) as lease:
         return await _upload_xiaohongshu_video_with_lease(request, lease)
 
@@ -611,6 +614,7 @@ async def upload_bilibili_video(request: BilibiliVideoUploadRequest) -> Path:
 
 
 async def upload_tencent_video(request: TencentVideoUploadRequest) -> Path:
+    require_task_delivery()
     with AccountLease(default_runtime_dir(), "tencent", request.account_name) as lease:
         return await _upload_tencent_video_with_lease(request, lease)
 

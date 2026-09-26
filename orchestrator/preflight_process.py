@@ -10,7 +10,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from orchestrator.errors import TaskError
 from orchestrator.locking import process_identity, process_state
@@ -19,7 +19,7 @@ from orchestrator.locking import process_identity, process_state
 _CHILD_ARGUMENT = "--preflight-child"
 _SHUTDOWN_SECONDS = 0.6
 _SAFE_CODES = frozenset({
-    "INVALID_INPUT", "UNSUPPORTED", "STORAGE_ERROR", "ACCOUNT_BUSY", "LOCK_ERROR",
+    "INVALID_INPUT", "UNSUPPORTED", "STORAGE_ERROR", "ACCOUNT_BUSY", "LOCK_ERROR", "OWNERSHIP_LOST",
 })
 
 
@@ -57,7 +57,7 @@ def _run_request(request: dict[str, Any]) -> None:
 
 
 def _watch_parent(pid: int, identity: str) -> None:
-    """End this read-only child if its exact originating process disappears."""
+    """End this local worker child if its exact originating process disappears."""
     while True:
         try:
             state = process_state(pid, identity)
@@ -68,7 +68,7 @@ def _watch_parent(pid: int, identity: str) -> None:
         time.sleep(0.1)
 
 
-def _child_main() -> int:
+def child_main(operation: Callable[[dict[str, Any]], None] = _run_request) -> int:
     try:
         request = json.loads(sys.stdin.buffer.read())
         pid = request["parent_pid"]
@@ -78,7 +78,7 @@ def _child_main() -> int:
         if process_state(pid, identity) != "LIVE":
             return 3
         threading.Thread(target=_watch_parent, args=(pid, identity), daemon=True).start()
-        _run_request(request)
+        operation(request)
         response: dict[str, Any] = {"ok": True}
     except TaskError as exc:
         response = {"ok": False, "code": exc.code if exc.code in _SAFE_CODES else "PREFLIGHT_FAILED",
@@ -143,18 +143,26 @@ async def _stop_child(process: subprocess.Popen[bytes], reader: asyncio.Future[t
 async def verify_job(job: dict, database: Path, runtime_dir: Path,
                      media_roots: tuple[Path, ...]) -> None:
     """Verify binding and media without blocking the worker event loop."""
-    parent_pid = os.getpid()
-    parent_identity = process_identity(parent_pid)
-    if parent_identity is None:
-        raise TaskError("PREFLIGHT_FAILED", "Preflight parent identity is unavailable")
     manifest = job["manifest"]
     request = {
-        "parent_pid": parent_pid, "parent_identity": parent_identity,
         "database": str(database), "runtime_dir": str(runtime_dir),
         "media_roots": [str(root) for root in media_roots],
         "platform": job["platform"], "account": job["account"],
         "manifest": {key: manifest.get(key) for key in ("expected_account_id", "media", "cover")},
     }
+    await run_child_request(request)
+
+
+async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process",
+                            register_process: Callable[[int], None] | None = None) -> None:
+    """Run an internal operation in a watched child that is reaped on cancellation."""
+    if module not in {"orchestrator.preflight_process", "orchestrator.diagnostic_process", "orchestrator.session_process"}:
+        raise TaskError("UNSUPPORTED", "Child operation is not supported")
+    parent_pid = os.getpid()
+    parent_identity = process_identity(parent_pid)
+    if parent_identity is None:
+        raise TaskError("PREFLIGHT_FAILED", "Preflight parent identity is unavailable")
+    request = {**request, "parent_pid": parent_pid, "parent_identity": parent_identity}
     try:
         payload = json.dumps(request, ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError) as exc:
@@ -169,7 +177,7 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
         options["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         process = cast("subprocess.Popen[bytes]", subprocess.Popen(
-            [_base_python(), "-m", "orchestrator.preflight_process", _CHILD_ARGUMENT], **options,
+            [_base_python(), "-m", module, _CHILD_ARGUMENT], **options,
         ))
     except OSError as exc:
         raise TaskError("PREFLIGHT_FAILED", "Preflight process could not start") from exc
@@ -177,8 +185,10 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
     loop = asyncio.get_running_loop()
     reader: asyncio.Future[tuple[int, bytes | None]] = loop.create_future()
     try:
+        if register_process is not None:
+            register_process(process.pid)
         threading.Thread(target=_read_child, args=(process, payload, loop, reader), daemon=True).start()
-    except RuntimeError as exc:
+    except Exception as exc:
         if process.poll() is None:
             try:
                 process.terminate()
@@ -219,4 +229,4 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
 
 
 if __name__ == "__main__":
-    sys.exit(_child_main() if sys.argv[1:] == [_CHILD_ARGUMENT] else 2)
+    sys.exit(child_main() if sys.argv[1:] == [_CHILD_ARGUMENT] else 2)

@@ -111,6 +111,20 @@ _KNOWN_FIELDS = frozenset({
 })
 _MEDIA_FIELD = re.compile(r"media\[[0-9]{1,3}\](?:\.(?:kind|sha256))?\Z")
 _COVER_FIELD = re.compile(r"cover\.(?:kind|sha256)\Z")
+_TARGET_FIELD = re.compile(r"targets\[(?:0|[1-9][0-9]{0,2})\](?:\.(.+))?\Z")
+_TARGET_MEMBERS = frozenset({
+    "platform", "account", "overrides", "schema_version", "delivery_key",
+    "content_type", "title", "body", "tags", "media", "cover", "collection",
+    "facts", "declarations", "field_policy", "run_at", "publish_at",
+})
+_OVERRIDE_MEMBERS = _TARGET_MEMBERS - {"overrides"}
+_OVERRIDE_NESTED = {
+    "facts": frozenset({"ownership", "ai_usage", "repost_source"}),
+    "declarations": frozenset({"ownership", "ai_usage", "repost_source",
+                                "originality_rights", "repost_authorized"}),
+    "field_policy": frozenset({"required", "optional", "allow_omit"}),
+    "run_at": frozenset({"local", "timezone", "fold"}),
+}
 _VERSION = re.compile(r"(?:[0-9]+(?:\.[0-9]+){1,5}|Chromium-local-[0-9]+|unavailable)\Z")
 _STAGES = frozenset({
     "QUEUED", "prepare", "preflight", "navigation", "upload", "processing",
@@ -130,6 +144,23 @@ _ARTIFACT = re.compile(r"[0-9a-f]{32}\.json\Z")
 EVIDENCE_RETENTION_DAYS = 30
 
 
+def _safe_target_field(value: str) -> bool:
+    """Accept bounded batch paths composed only of fixed schema field names."""
+    match = _TARGET_FIELD.fullmatch(value)
+    if match is None:
+        return False
+    suffix = match.group(1)
+    if suffix is None or suffix in _TARGET_MEMBERS:
+        return True
+    if not suffix.startswith("overrides."):
+        return False
+    override = suffix[len("overrides."):]
+    if override in _OVERRIDE_MEMBERS:
+        return True
+    parent, separator, child = override.partition(".")
+    return bool(separator) and child in _OVERRIDE_NESTED.get(parent, ())
+
+
 def diagnostic_error(value: Any) -> dict[str, str | None]:
     """Keep a stable business category and field, never arbitrary prose."""
     item = value if isinstance(value, Mapping) else {}
@@ -138,6 +169,7 @@ def diagnostic_error(value: Any) -> dict[str, str | None]:
     raw_field = item.get("field")
     field = raw_field if isinstance(raw_field, str) and (
         raw_field in _KNOWN_FIELDS or _MEDIA_FIELD.fullmatch(raw_field) or _COVER_FIELD.fullmatch(raw_field)
+        or _safe_target_field(raw_field)
     ) else None
     raw_message = item.get("message")
     message = (raw_message if isinstance(raw_message, str)

@@ -805,6 +805,9 @@ class DouYinVideo(DouYinBaseUploader):
         require_task_delivery()
 
     async def douyin_upload_video(self):
+        from orchestrator.platforms.legacy import require_task_delivery
+
+        require_task_delivery()
         async with async_playwright() as playwright:
             await self.upload(playwright)
 

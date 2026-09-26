@@ -73,6 +73,12 @@ async def dispatch(args: argparse.Namespace) -> int:
             from orchestrator.platforms import default_adapters
 
             selected = service.status(args.job_id) if args.job_id else None
+            if selected is not None and selected["status"] not in {
+                "QUEUED", "PREPARING", "READY", "FAILED_PRE_SUBMIT", "SUBMITTING", "UNKNOWN_COMMIT",
+            }:
+                # Querying a finished intent must not require a live adapter.
+                print(json.dumps(selected, ensure_ascii=False, allow_nan=False))
+                return 0
             paths = service.capabilities()
             if selected is not None:
                 paths = [item for item in paths if item["platform"] == selected["platform"]

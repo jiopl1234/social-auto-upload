@@ -134,3 +134,23 @@ def test_explicit_ai_rights_cover_and_collection_read_back_without_defaults(tmp_
         assert result["actual_metadata"]["cover"]["sha256"] == job["manifest"]["cover"]["sha256"]
         assert result["actual_metadata"]["collection"] == ("Series A" if platform != "xiaohongshu" else None)
         assert len(site.submissions) == 1
+
+
+@pytest.mark.parametrize("platform,mutation,code", [
+    ("douyin", "document.querySelector('#identity').dataset.accountId='switched'", "IDENTITY_MISMATCH"),
+    ("xiaohongshu", "document.querySelector('#title').value='changed after preparation'", "METADATA_MISMATCH"),
+    ("tencent", "document.body.insertAdjacentHTML('beforeend', '<div data-challenge=auth>实名验证</div>')", "AUTH_REQUIRED"),
+])
+def test_final_readback_failure_stays_definitely_unsubmitted(tmp_path, platform, mutation, code):
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, platform=platform))
+    with CreatorSite(platform) as site:
+        result = asyncio.run(service.run_once(
+            adapters={platform: fixture_adapter(service, site, mutate_after_save=mutation)}, job_id=job["job_id"],
+            limits={"total": 20, "cleanup": 3}))
+        assert result is not None and result["error"]["code"] == code
+        assert result["submission"] == "NOT_SUBMITTED"
+        assert service.attempts(job["job_id"])[0]["submit_count"] == 0
+        assert site.submissions == []

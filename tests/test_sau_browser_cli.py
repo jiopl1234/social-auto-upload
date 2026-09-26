@@ -5,7 +5,12 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 import sau_cli
+from orchestrator.errors import TaskError
+from uploader.douyin_uploader.main import DouYinVideo
+from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo
 from uploader.tencent_uploader.main import TencentVideo
 
 
@@ -202,7 +207,7 @@ class BrowserCliParserTests(unittest.TestCase):
 
 
 class BrowserCliDispatchTests(unittest.TestCase):
-    def test_upload_tencent_video_forwards_collection_name_to_uploader(self):
+    def test_tencent_video_request_keeps_collection_but_rejects_legacy_upload(self):
         request = sau_cli.TencentVideoUploadRequest(
             account_name="creator",
             video_file=Path("demo.mp4"),
@@ -213,13 +218,20 @@ class BrowserCliDispatchTests(unittest.TestCase):
             collection_name="我的合集",
         )
 
-        with (
-            patch("uploader.tencent_uploader.main.tencent_setup", new=AsyncMock(return_value=True)),
-            patch.object(TencentVideo, "tencent_upload_video", new=AsyncMock()) as mock_upload,
-        ):
-            asyncio.run(sau_cli.upload_tencent_video(request))
+        self.assertEqual(request.collection_name, "我的合集")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with (
+                patch("sau_cli.default_runtime_dir", return_value=Path(tmp_dir) / "runtime"),
+                patch("sau_cli.resolve_runtime_home", return_value=Path(tmp_dir)),
+                patch("uploader.tencent_uploader.main.tencent_setup", new=AsyncMock(return_value=True)) as setup,
+                patch.object(TencentVideo, "tencent_upload_video", new=AsyncMock()) as mock_upload,
+            ):
+                with self.assertRaises(TaskError) as caught:
+                    asyncio.run(sau_cli.upload_tencent_video(request))
 
-        mock_upload.assert_awaited_once()
+        self.assertEqual(caught.exception.code, "UNSUPPORTED")
+        setup.assert_not_awaited()
+        mock_upload.assert_not_awaited()
 
     def test_dispatch_xiaohongshu_check_prints_valid(self):
         args = Namespace(platform="xiaohongshu", action="check", account="creator")
@@ -325,6 +337,20 @@ class BrowserCliDispatchTests(unittest.TestCase):
         self.assertEqual(request.note, "图文正文")
         self.assertTrue(request.headless)
         self.assertEqual(len(request.image_files), 2)
+
+
+@pytest.mark.parametrize("module_path,uploader_class,method_name", [
+    ("uploader.douyin_uploader.main", DouYinVideo, "douyin_upload_video"),
+    ("uploader.xiaohongshu_uploader.main", XiaoHongShuVideo, "xiaohongshu_upload_video"),
+    ("uploader.tencent_uploader.main", TencentVideo, "tencent_upload_video"),
+])
+def test_video_wrapper_rejects_before_starting_driver(module_path, uploader_class, method_name):
+    uploader = uploader_class("title", "unused.mp4", [], 0, "unused.json")
+    with patch(f"{module_path}.async_playwright", side_effect=AssertionError("driver started")) as start:
+        with pytest.raises(TaskError) as caught:
+            asyncio.run(getattr(uploader, method_name)())
+    assert caught.value.code == "UNSUPPORTED"
+    start.assert_not_called()
 
 
 if __name__ == "__main__":

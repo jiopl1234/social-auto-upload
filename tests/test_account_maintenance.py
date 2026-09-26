@@ -111,19 +111,14 @@ def test_public_maintenance_and_upload_entries_obey_external_process_lock(
     lease = AccountLease(runtime, platform, "creator")
 
     if platform == "douyin":
-        uploads = (
-            lambda: sau_cli.upload_video(sau_cli.DouyinVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0)),
-            lambda: sau_cli.upload_note(sau_cli.DouyinNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),
-        )
+        video = lambda: sau_cli.upload_video(sau_cli.DouyinVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
+        uploads = (lambda: sau_cli.upload_note(sau_cli.DouyinNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),)
     elif platform == "xiaohongshu":
-        uploads = (
-            lambda: sau_cli.upload_xiaohongshu_video(sau_cli.XiaohongshuVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0)),
-            lambda: sau_cli.upload_xiaohongshu_note(sau_cli.XiaohongshuNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),
-        )
+        video = lambda: sau_cli.upload_xiaohongshu_video(sau_cli.XiaohongshuVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
+        uploads = (lambda: sau_cli.upload_xiaohongshu_note(sau_cli.XiaohongshuNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),)
     else:
-        uploads = (
-            lambda: sau_cli.upload_tencent_video(sau_cli.TencentVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0)),
-        )
+        video = lambda: sau_cli.upload_tencent_video(sau_cli.TencentVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
+        uploads = ()
 
     operations = (lambda: login("creator"), lambda: check("creator"), *uploads)
     with external_process_lock(lease.lock.path):
@@ -131,6 +126,9 @@ def test_public_maintenance_and_upload_entries_obey_external_process_lock(
             with pytest.raises(TaskError) as caught:
                 asyncio.run(operation())
             assert caught.value.code == "ACCOUNT_BUSY"
+        with pytest.raises(TaskError) as caught:
+            asyncio.run(video())
+        assert caught.value.code == "UNSUPPORTED"
 
 
 @pytest.mark.parametrize(
@@ -141,19 +139,18 @@ def test_public_maintenance_and_upload_entries_obey_external_process_lock(
         ("tencent", "tencent_setup", "TencentVideo", "tencent_upload_video", sau_cli.TencentVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0), sau_cli.upload_tencent_video),
     ),
 )
-def test_legacy_upload_holds_process_lock_through_check_and_upload(
+def test_legacy_video_rejects_before_check_and_allows_same_account_maintenance(
     tmp_path, monkeypatch, platform, setup_name, class_name, method_name, upload_request, upload
 ):
     runtime = tmp_path / "runtime"
     monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
     (tmp_path / "legacy").mkdir()
     monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
-    lock_path = AccountLease(runtime, platform, "creator").lock.path
+    lease = AccountLease(runtime, platform, "creator")
     phases = []
 
     async def setup(*_args, **_kwargs):
         phases.append("check")
-        assert probe_external_lock(lock_path) == "ACCOUNT_BUSY"
         return True
 
     class FakeUploader:
@@ -162,16 +159,25 @@ def test_legacy_upload_holds_process_lock_through_check_and_upload(
 
     async def run_upload(self):
         phases.append("upload")
-        assert probe_external_lock(lock_path) == "ACCOUNT_BUSY"
+        from orchestrator.platforms.legacy import require_task_delivery
+
+        require_task_delivery()
 
     setattr(FakeUploader, method_name, run_upload)
     module = _fake_setup_module(platform, setup_name, setup)
     setattr(module, class_name, FakeUploader)
+    check_account = next(row[3] for row in PLATFORMS if row[0] == platform)
     with patch.dict(sys.modules, {f"uploader.{platform}_uploader.main": module}):
-        asyncio.run(upload(upload_request))
+        with pytest.raises(TaskError) as caught:
+            asyncio.run(upload(upload_request))
+        assert caught.value.code == "UNSUPPORTED"
+        assert phases == []
+        assert not lease.path.exists()
+        assert asyncio.run(check_account("creator")) is False
 
-    assert phases == ["check", "upload"]
-    assert probe_external_lock(lock_path) == "acquired"
+    with AccountLease(runtime, platform, "creator"):
+        pass
+    assert probe_external_lock(lease.lock.path) == "acquired"
 
 
 def test_login_sessions_remain_separate_and_release_platform_lease(tmp_path, monkeypatch):
@@ -220,21 +226,27 @@ def test_login_error_leaves_unconfirmed_resource_marker(tmp_path, monkeypatch):
     assert caught.value.code == "ACCOUNT_BUSY"
 
 
-def test_invalid_upload_cookie_releases_lease_after_completed_check(tmp_path, monkeypatch):
+def test_unsupported_video_does_not_check_missing_cookie_or_acquire_lease(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
     (tmp_path / "legacy").mkdir()
     monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
 
+    called = []
+
     async def invalid_cookie(*_args, **_kwargs):
+        called.append("cookie-check")
         return False
 
     module = _fake_setup_module("douyin", "douyin_setup", invalid_cookie)
     setattr(module, "DouYinVideo", object)
     request = sau_cli.DouyinVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0)
     with patch.dict(sys.modules, {"uploader.douyin_uploader.main": module}):
-        with pytest.raises(RuntimeError, match="cookie is missing or expired"):
+        with pytest.raises(TaskError) as caught:
             asyncio.run(sau_cli.upload_video(request))
+    assert caught.value.code == "UNSUPPORTED"
+    assert called == []
+    assert not AccountLease(runtime, "douyin", "creator").path.exists()
     with AccountLease(runtime, "douyin", "creator"):
         pass
 

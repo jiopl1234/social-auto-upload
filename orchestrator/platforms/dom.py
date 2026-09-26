@@ -46,6 +46,7 @@ class DomPagePort:
         self.edit_url, self.works_url, self.evidence = edit_url, works_url, evidence
         self.verification_scope = evidence.verification_scope if evidence is not None else "unverified"
         self.submitted = False
+        self.submit_button: Any = None
 
     def _evidence(self) -> PageEvidence:
         if self.evidence is None:
@@ -160,12 +161,16 @@ class DomPagePort:
                 "cover": await self._evidence().cover(page), "collection": collection or None,
                 "declarations": await self._evidence().declarations(page)}
 
+    async def arm_submission(self, page: Any) -> None:
+        self.submit_button = await self._control(page, self.selectors.submit, "submit")
+        if not await self.submit_button.is_enabled():
+            raise TaskError("UI_CHANGED", "Final action is not enabled", field="submit")
+
     async def submit_once(self, page: Any) -> dict | None:
-        if self.submitted:
+        if self.submitted or self.submit_button is None:
             raise TaskError("INVALID_STATE", "Final action was already attempted")
-        button = await self._control(page, self.selectors.submit, "submit")
         self.submitted = True
-        await button.click(timeout=0)
+        await self.submit_button.click(timeout=0)
         return await self._evidence().receipt(page)
 
     async def list_works(self, page: Any, content_type: str) -> list[dict]:

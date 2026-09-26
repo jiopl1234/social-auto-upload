@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Mapping
 
 from orchestrator.accounts import _storage_state_bytes
 from orchestrator.errors import TaskError
-from orchestrator.session_storage import atomic_private_write
+from orchestrator.preflight_process import run_child_request
 
 
 PATCHRIGHT_PIN = "1.58.2"
@@ -135,8 +135,14 @@ class BrowserSession:
                 payload = json.dumps(state, ensure_ascii=False, allow_nan=False).encode("utf-8")
                 if len(payload) > 5_000_000:
                     raise ValueError("Storage state exceeds the managed limit")
-                destination = Path(path)
-                atomic_private_write(destination, payload, validate=_storage_state_bytes)
+                await run_child_request({"path": str(path), "state": state},
+                                        module="orchestrator.session_process",
+                                        register_process=self.context.register_process)
+            except TaskError as exc:
+                if exc.code == "RESOURCES_UNCONFIRMED":
+                    self._creation_uncertain = True
+                    raise
+                raise TaskError("STORAGE_ERROR", "Browser session state could not be saved") from None
             except Exception:
                 # Exception strings can contain cookie values or local paths.
                 raise TaskError("STORAGE_ERROR", "Browser session state could not be saved") from None

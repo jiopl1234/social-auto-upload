@@ -27,6 +27,7 @@ class ExecutionContext:
     store: Store
     lease: AccountLease
     budget: ExecutionBudget = field(default_factory=lambda: ExecutionBudget(validate_limits(None)))
+    runtime_records: list[dict] = field(default_factory=list)
 
     def assert_owner(self) -> None:
         self.lease.assert_owner()
@@ -57,11 +58,12 @@ class ExecutionContext:
         return self.budget.time_left(stage)
 
     def record_runtime(self, details: Mapping[str, Any]) -> None:
-        self.assert_owner()
-        self.store.record_diagnostic_evidence(
-            self.job_id, self.lease.token, "runtime",
-            {**details, "execution_limits": dict(self.budget.limits)}, runtime_dir=self.lease.runtime_dir,
-        )
+        from orchestrator.diagnostics import diagnostic_event
+
+        if len(self.runtime_records) < 8:
+            self.runtime_records.append({"stage": "runtime", "details": diagnostic_event(
+                "runtime", {**details, "execution_limits": dict(self.budget.limits)},
+            )})
 
 
 class PreparationAdapter(Protocol):
@@ -161,6 +163,39 @@ async def _cleanup(adapter: PreparationAdapter, context: ExecutionContext, warni
     return failure
 
 
+async def _flush_diagnostics(context: ExecutionContext, error: TaskError | None, warnings: list[dict]) -> TaskError | None:
+    from orchestrator.preflight_process import run_child_request
+
+    records = list(context.runtime_records)
+    if error is not None or warnings:
+        records.append({"stage": "diagnostic", "details": {
+            "error": error.as_dict() if error else None, "warnings": list(warnings),
+        }})
+    if not records:
+        return None
+    # Browser cleanup has priority. Reserve child termination time as well;
+    # when little time remains, durable DB errors still describe the outcome.
+    remaining = context.time_left("cleanup")
+    if remaining <= 1.5:
+        warnings.append(TaskError("STORAGE_ERROR", "Diagnostic evidence could not be saved").as_dict())
+        return None
+    request = {"database": str(context.store.path), "runtime_dir": str(context.lease.runtime_dir),
+               "job_id": context.job_id, "owner_token": context.lease.token, "records": records}
+    try:
+        await asyncio.wait_for(run_child_request(request, module="orchestrator.diagnostic_process"),
+                               timeout=min(2.0, remaining - 1.2))
+    except asyncio.CancelledError:
+        return TaskError("CANCELLED", "Task execution was cancelled")
+    except TaskError as exc:
+        if exc.code == "RESOURCES_UNCONFIRMED":
+            context.resources_started()
+            return exc
+        warnings.append(TaskError("STORAGE_ERROR", "Diagnostic evidence could not be saved").as_dict())
+    except (TimeoutError, OSError):
+        warnings.append(TaskError("STORAGE_ERROR", "Diagnostic evidence could not be saved").as_dict())
+    return None
+
+
 async def run_once(
     store: Store, runtime_dir: Path, adapters: Mapping[str, PreparationAdapter], job_id: str | None = None,
     *, preflight: Callable[[dict], Awaitable[Any]] | None = None, max_attempts: int = 2,
@@ -222,6 +257,10 @@ async def run_once(
                         warnings.extend(field_warnings)
                         job = store.mark_ready(job["job_id"], lease.token, cast(dict, metadata), warnings)
                         await _preflight(context, job, preflight)
+                        verify_ready = getattr(adapter, "verify_ready", None)
+                        if callable(verify_ready):
+                            final_check = cast(Callable[[ExecutionContext], Awaitable[None]], verify_ready)
+                            await context.run_stage("metadata", lambda: final_check(context))
                         context.assert_owner()
                         if context.time_left("submit") <= 0:
                             raise TaskError("TIMEOUT", "Execution deadline expired before submission", field="submit")
@@ -248,17 +287,12 @@ async def run_once(
                 context.assert_owner()
                 if error and error.code == "OWNERSHIP_LOST":
                     raise error
-                if error is not None or warnings:
-                    try:
-                        store.record_diagnostic_evidence(
-                            job["job_id"], lease.token, "diagnostic",
-                            {"error": error.as_dict() if error else None, "warnings": warnings},
-                            runtime_dir=runtime_dir,
-                        )
-                    except TaskError as evidence_error:
-                        if evidence_error.code != "STORAGE_ERROR":
-                            raise
-                        warnings.append(TaskError("STORAGE_ERROR", "Diagnostic evidence could not be saved").as_dict())
+                diagnostic_failure = await _flush_diagnostics(context, error, warnings)
+                if diagnostic_failure is not None:
+                    if error is None:
+                        error = diagnostic_failure
+                    else:
+                        warnings.append(diagnostic_failure.as_dict())
                 pause_reason = next((item for item in ([error.as_dict()] if error else []) + warnings
                                      if item["code"] in PAUSE_CODES), None)
                 if submitted:

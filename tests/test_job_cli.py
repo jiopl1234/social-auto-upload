@@ -173,6 +173,21 @@ def test_capability_and_evidence_maintenance_are_machine_readable(tmp_path):
     assert pruned == {"removed": 0, "retention_days": 30}
 
 
+def test_run_of_finished_task_is_read_only_even_when_live_capability_is_restricted(tmp_path):
+    import asyncio
+    from tests.test_job_delivery import PublishingTarget
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+    completed_job = asyncio.run(service.run_once(adapters={"douyin": PublishingTarget(service)}, job_id=job["job_id"]))
+    assert completed_job is not None and completed_job["status"] == "COMPLETED"
+    previous_events = service.events(job["job_id"])
+    completed, result = run_jobs(service.store.path, "run", "--job", job["job_id"])
+    assert completed.returncode == 0
+    assert result == completed_job
+    assert service.events(job["job_id"]) == previous_events
+
+
 def test_account_pause_reason_is_queryable_from_machine_cli(tmp_path):
     from orchestrator.service import TaskService
 

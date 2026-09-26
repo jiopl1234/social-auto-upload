@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 
 import pytest
 
@@ -176,6 +177,48 @@ def _run(service, job, adapter, **kwargs):
     result = asyncio.run(service.run_once(adapters={"douyin": adapter}, job_id=job["job_id"], **kwargs))
     assert result is not None
     return result
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_slow_session_filesystem_cannot_starve_browser_cleanup(tmp_path, monkeypatch, cancel):
+    from orchestrator import preflight_process
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+    next_job = service.enqueue(make_manifest(tmp_path, key="next"))
+    harness = DriverHarness()
+    previous = _session_path(service).read_bytes()
+    original = subprocess.Popen
+    started = asyncio.Event()
+    child = None
+
+    def start_child(command, **kwargs):
+        nonlocal child
+        if "orchestrator.session_process" in command:
+            child = original([command[0], "-c", "import time; time.sleep(30)"], **kwargs)
+            started.set()
+            return child
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(preflight_process.subprocess, "Popen", start_child)
+
+    async def exercise():
+        running = asyncio.create_task(service.run_once(
+            adapters={"douyin": BrowserPreparation(_session_path(service), harness, save=True)},
+            job_id=job["job_id"], limits={"total": 6, "session_save": 1, "cleanup": 2}))
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await asyncio.wait_for(asyncio.sleep(0.03), timeout=0.25)
+        if cancel:
+            running.cancel()
+        return await asyncio.wait_for(running, timeout=3)
+
+    result = asyncio.run(exercise())
+    assert result is not None and result["submission"] == "NOT_SUBMITTED"
+    assert result["error"]["code"] == ("CANCELLED" if cancel else "TIMEOUT")
+    assert child is not None and child.poll() is not None
+    assert _session_path(service).read_bytes() == previous
+    _assert_outer_closed(harness)
+    assert _run(service, next_job, BrowserPreparation(_session_path(service), DriverHarness()))["status"] == "READY"
 
 
 def _assert_outer_closed(harness: DriverHarness) -> LocalBrowser:

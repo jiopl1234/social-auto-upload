@@ -26,6 +26,7 @@ class PagePort(Protocol):
     async def wait_media(self, page: Any, manifest: Mapping[str, Any]) -> None: ...
     async def apply_fields(self, page: Any, manifest: Mapping[str, Any]) -> None: ...
     async def readback(self, page: Any) -> dict: ...
+    async def arm_submission(self, page: Any) -> None: ...
     async def submit_once(self, page: Any) -> dict | None: ...
     async def list_works(self, page: Any, content_type: str) -> list[dict]: ...
 
@@ -46,6 +47,7 @@ class BrowserDeliveryAdapter:
         self.page: Any = None
         self.attempt_id: str | None = None
         self.submission_started = False
+        self.verified_for: str | None = None
         self.cleanup_warnings: list[dict] = []
 
     async def _open(self, context: ExecutionContext) -> tuple[PagePort, Any]:
@@ -66,6 +68,7 @@ class BrowserDeliveryAdapter:
             raise TaskError("UNSUPPORTED", "Local evidence cannot enable a production origin", field="platform")
         self.port, self.attempt_id = port, context.attempt_id
         self.submission_started = False
+        self.verified_for = None
         self.cleanup_warnings.clear()
         session = self.session_factory(context)
         self.session = session
@@ -117,7 +120,7 @@ class BrowserDeliveryAdapter:
         await self.session.save_state(managed_session_path(self.runtime_dir, port.platform, str(context.manifest["account"])))
         return actual
 
-    async def submit(self, context: ExecutionContext) -> dict | None:
+    async def verify_ready(self, context: ExecutionContext) -> None:
         if self.session is None or self.port is None or self.attempt_id != context.attempt_id or self.submission_started:
             raise TaskError("INVALID_STATE", "This attempt cannot submit again")
         await self._guard(context)
@@ -125,7 +128,15 @@ class BrowserDeliveryAdapter:
         persisted = context.store.get(context.job_id)
         if actual != persisted["actual_metadata"]:
             raise TaskError("METADATA_MISMATCH", "Ready metadata changed before submission", field="actual_metadata")
+        await self.port.arm_submission(self.page)
         await self._guard(context)
+        self.verified_for = context.attempt_id
+
+    async def submit(self, context: ExecutionContext) -> dict | None:
+        if self.port is None or self.verified_for != context.attempt_id or self.submission_started:
+            raise TaskError("INVALID_STATE", "Final action was not prepared for this attempt")
+        # All definitely-no-action checks ran before the durable boundary.
+        # From here on, a click error or cancellation is conservatively unknown.
         self.submission_started = True
         return await self.port.submit_once(self.page)
 

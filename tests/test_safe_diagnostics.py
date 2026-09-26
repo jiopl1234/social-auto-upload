@@ -197,3 +197,60 @@ def test_managed_session_acl_is_private_even_after_a_broad_existing_grant(tmp_pa
 
     _assert_private_windows_acl(target.parent)
     _assert_private_windows_acl(target)
+
+
+@pytest.mark.parametrize("targets, expected_field", [
+    ([None], "targets[0]"),
+    ([{"account": "creator"}], "targets[0].platform"),
+    ([{"platform": "douyin", "account": "creator"},
+      {"platform": "douyin", "account": "creator"}], "targets[1]"),
+    ([{"platform": "douyin", "account": "creator"},
+      {"platform": "xiaohongshu", "account": "creator",
+       "overrides": {"run_at": {"fold": "invalid"}}}], "targets[1].overrides.run_at.fold"),
+    ([{"platform": "douyin", "account": "creator",
+       "overrides": {"declarations": {"ai_usage": 42}}}],
+     "targets[0].overrides.declarations.ai_usage"),
+    ([{"platform": "douyin", "account": "creator",
+       "overrides": {"field_policy": {"required": "title"}}}],
+     "targets[0].overrides.field_policy.required"),
+    ([{"platform": "douyin", "account": "creator",
+       "overrides": {"delivery_key": "another"}}],
+     "targets[0].overrides.delivery_key"),
+])
+def test_batch_input_errors_keep_safe_target_field_paths(tmp_path, targets, expected_field):
+    service = make_service(tmp_path)
+    payload = make_manifest(tmp_path)
+    payload.pop("platform")
+    payload.pop("account")
+    payload["targets"] = targets
+
+    with pytest.raises(TaskError) as caught:
+        service.enqueue_batch(payload)
+
+    public_error = caught.value.as_dict()
+    assert public_error["code"] == "INVALID_INPUT"
+    assert public_error["field"] == expected_field
+
+
+@pytest.mark.parametrize("overrides", [
+    {"otp_739124_COOKIE_SECRET": "private value"},
+    {"run_at": {"otp_739124_COOKIE_SECRET": "private value"}},
+])
+def test_batch_input_error_drops_unknown_secret_field_name(tmp_path, overrides):
+    service = make_service(tmp_path)
+    payload = make_manifest(tmp_path)
+    payload.pop("platform")
+    payload.pop("account")
+    payload["targets"] = [{
+        "platform": "douyin", "account": "creator",
+        "overrides": overrides,
+    }]
+
+    with pytest.raises(TaskError) as caught:
+        service.enqueue_batch(payload)
+
+    public_error = caught.value.as_dict()
+    assert public_error["code"] == "INVALID_INPUT"
+    assert public_error["field"] is None
+    assert "739124" not in json.dumps(public_error)
+    assert "COOKIE_SECRET" not in json.dumps(public_error)

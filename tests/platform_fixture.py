@@ -116,7 +116,7 @@ class FixtureEvidence:
         return {"content_id": content_id} if content_id else None
 
 
-def fixture_adapter(service, site: CreatorSite):
+def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None = None):
     import pytest
     from orchestrator.platforms.base import BrowserDeliveryAdapter
     from orchestrator.platforms.profiles import EDITORS, create_port
@@ -124,6 +124,12 @@ def fixture_adapter(service, site: CreatorSite):
     executable = _installed_chromium_executable()
     if executable is None:
         pytest.skip("No local Chromium browser available")
+    class Session(BrowserSession):
+        async def save_state(self, path):
+            await super().save_state(path)
+            if mutate_after_save is not None:
+                assert self.page is not None
+                await self.page.evaluate(mutate_after_save)
     selectors = replace(EDITORS[site.platform],
         tag_search="#tag-search", tag_candidates="#topics button", selected_tags="#tags > span",
         cover_input="#cover", collection="#collection",
@@ -135,7 +141,7 @@ def fixture_adapter(service, site: CreatorSite):
         service.runtime_dir,
         lambda: create_port(site.platform, selectors=selectors, edit_url=site.url, works_url=site.url,
                             evidence=FixtureEvidence()),
-        session_factory=lambda context: BrowserSession(context, launch_options={
+        session_factory=lambda context: Session(context, launch_options={
             "headless": True, "executable_path": str(executable),
         }),
     )
