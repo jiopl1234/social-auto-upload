@@ -24,9 +24,11 @@ def test_wait_for_realtime_verification_saves_qr_and_resumes(tmp_path: Path):
 
             async def dismiss_dialog():
                 # A user can scan the exported QR only after its image is saved.
-                async with asyncio.timeout(2):
-                    while not qr_path.is_file() or qr_path.stat().st_size == 0:
-                        await asyncio.sleep(0.01)
+                deadline = asyncio.get_running_loop().time() + 2
+                while not qr_path.is_file() or qr_path.stat().st_size == 0:
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise TimeoutError("Verification image was not saved")
+                    await asyncio.sleep(0.01)
                 await page.locator("div.weui-desktop-dialog__wrp").evaluate("el => el.remove()")
 
             dismiss_task = asyncio.create_task(dismiss_dialog())
