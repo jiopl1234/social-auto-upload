@@ -1,0 +1,36 @@
+Installed 7 packages in 118ms
+
+=================================== ERRORS ====================================
+_______________ ERROR collecting tests/test_sau_bilibili_cli.py _______________
+ImportError while importing test module 'C:\Users\Chinese\social-auto-upload\tests\test_sau_bilibili_cli.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sau_bilibili_cli.py:9: in <module>
+    import sau_cli
+sau_cli.py:12: in <module>
+    from uploader.baijiahao_uploader.main import (
+uploader\baijiahao_uploader\main.py:19: in <module>
+    from playwright.async_api import Page, Playwright, TimeoutError as PWTimeoutError, async_playwright
+E   ModuleNotFoundError: No module named 'playwright'
+_______________ ERROR collecting tests/test_sau_browser_cli.py ________________
+ImportError while importing test module 'C:\Users\Chinese\social-auto-upload\tests\test_sau_browser_cli.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+..\AppData\Local\Programs\Python\Python312\Lib\importlib\__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_sau_browser_cli.py:8: in <module>
+    import sau_cli
+sau_cli.py:12: in <module>
+    from uploader.baijiahao_uploader.main import (
+uploader\baijiahao_uploader\main.py:19: in <module>
+    from playwright.async_api import Page, Playwright, TimeoutError as PWTimeoutError, async_playwright
+E   ModuleNotFoundError: No module named 'playwright'
+=========================== short test summary info ===========================
+ERROR tests/test_sau_bilibili_cli.py
+ERROR tests/test_sau_browser_cli.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!
+2 errors in 2.46s

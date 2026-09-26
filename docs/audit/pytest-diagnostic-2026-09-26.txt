@@ -1,0 +1,96 @@
+Downloading playwright (33.2MiB)
+ Downloaded playwright
+Installed 11 packages in 281ms
+.......F.F...................FFF.............F.                          [100%]
+================================== FAILURES ===================================
+__ DouyinDeclarationTests.test_declaration_failure_closes_browser_resources ___
+tests\test_douyin_declaration.py:91: in test_declaration_failure_closes_browser_resources
+    asyncio.run(video.upload(playwright))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+uploader\douyin_uploader\main.py:990: in upload
+    await page.wait_for_timeout(2000)
+E   TypeError: object MagicMock can't be used in 'await' expression
+---------------------------- Captured stdout call -----------------------------
+\x1b[38;2;112;172;222m2026-09-26 04:16:45\x1b[0m | \x1b[38;2;156;191;221mINFO\x1b[0m: \x1b[97m\U0001f9cd \u5c0f\u4eba\u5148\u68c0\u67e5 cookie\u3001\u89c6\u9891\u6587\u4ef6\u3001\u5c01\u9762\u548c\u53d1\u5e03\u65f6\u95f4\x1b[0m\n\x1b[38;2;112;172;222m2026-09-26 04:16:45\x1b[0m | \x1b[38;2;156;191;221mINFO\x1b[0m: \x1b[97m\U0001f973 \u4e0a\u4f20\u524d\u68c0\u67e5\u901a\u8fc7\x1b[0m\n\x1b[38;2;112;172;222m2026-09-26 04:16:45\x1b[0m | \x1b[38;2;156;191;221mINFO\x1b[0m: \x1b[97m\U0001f3c3 \u5c0f\u4eba\u5f00\u59cb\u642c\u8fd0\u89c6\u9891: \u6807\u9898.mp4\x1b[0m\n\x1b[38;2;112;172;222m2026-09-26 04:16:45\x1b[0m | \x1b[38;2;156;191;221mINFO\x1b[0m: \x1b[97m\U0001f9ed \u5c0f\u4eba\u6b63\u5728\u8d76\u5f80\u4e0a\u4f20\u4e3b\u9875\x1b[0m
+_ DouyinDeclarationTests.test_legacy_positional_runtime_flags_keep_their_meaning _
+tests\test_douyin_declaration.py:28: in test_legacy_positional_runtime_flags_keep_their_meaning
+    self.assertEqual(video.publish_strategy, "scheduled")
+E   AssertionError: False != 'scheduled'
+_ BrowserCliDispatchTests.test_dispatch_douyin_upload_note_uses_new_request_fields _
+tests\test_sau_browser_cli.py:243: in test_dispatch_douyin_upload_note_uses_new_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1081: in dispatch
+    if args.notef:
+       ^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'notef'. Did you mean: 'note'?
+_ BrowserCliDispatchTests.test_dispatch_douyin_upload_video_uses_dual_thumbnail_request_fields _
+tests\test_sau_browser_cli.py:269: in test_dispatch_douyin_upload_video_uses_dual_thumbnail_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1072: in dispatch
+    collection_name=args.collection,
+                    ^^^^^^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'collection'
+_ BrowserCliDispatchTests.test_dispatch_tencent_upload_video_uses_dual_thumbnail_request_fields _
+tests\test_sau_browser_cli.py:296: in test_dispatch_tencent_upload_video_uses_dual_thumbnail_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1279: in dispatch
+    collection_name=args.collection,
+                    ^^^^^^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'collection'
+___ XiaohongshuUploaderTests.test_video_fill_meta_uses_desc_then_first_tag ____
+tests\test_xiaohongshu_uploader.py:244: in test_video_fill_meta_uses_desc_then_first_tag
+    self.assertEqual(
+E   AssertionError: Lists differ: [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)] != [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]
+E   
+E   First differing element 0:
+E   ('wait_for', {'state': 'visible', 'timeout': 4000})
+E   ('wait_for', {'state': 'visible', 'timeout': 2000})
+E   
+E   - [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)]
+E   ?                                               ^
+E   
+E   + [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]
+E   ?                                               ^
+=========================== short test summary info ===========================
+FAILED tests/test_douyin_declaration.py::DouyinDeclarationTests::test_declaration_failure_closes_browser_resources
+FAILED tests/test_douyin_declaration.py::DouyinDeclarationTests::test_legacy_positional_runtime_flags_keep_their_meaning
+FAILED tests/test_sau_browser_cli.py::BrowserCliDispatchTests::test_dispatch_douyin_upload_note_uses_new_request_fields
+FAILED tests/test_sau_browser_cli.py::BrowserCliDispatchTests::test_dispatch_douyin_upload_video_uses_dual_thumbnail_request_fields
+FAILED tests/test_sau_browser_cli.py::BrowserCliDispatchTests::test_dispatch_tencent_upload_video_uses_dual_thumbnail_request_fields
+FAILED tests/test_xiaohongshu_uploader.py::XiaohongshuUploaderTests::test_video_fill_meta_uses_desc_then_first_tag
+6 failed, 41 passed in 5.57s

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="47" time="5.546" timestamp="2026-09-26T04:16:44.198997-07:00" hostname="DESKTOP-4PKCI03"><testcase classname="tests.test_bilibili_runtime.BiliupRuntimeTests" name="test_build_biliup_runtime_path_returns_platform_path" time="0.042" /><testcase classname="tests.test_bilibili_runtime.BiliupRuntimeTests" name="test_ensure_biliup_binary_downloads_when_missing" time="0.003" /><testcase classname="tests.test_bilibili_runtime.BiliupRuntimeTests" name="test_ensure_biliup_binary_reuses_local_when_up_to_date" time="0.001" /><testcase classname="tests.test_bilibili_runtime.BiliupRuntimeTests" name="test_run_biliup_command_login_uses_interactive_stdio" time="0.001" /><testcase classname="tests.test_bilibili_runtime.BiliupRuntimeTests" name="test_run_biliup_command_returns_completed_process" time="0.001" /><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_apply_declaration_skips_when_unspecified" time="0.002" /><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_apply_declaration_uses_exact_explicit_text" time="0.001" /><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_declaration_failure_closes_browser_resources" time="0.005"><failure message="TypeError: object MagicMock can't be used in 'await' expression">tests\test_douyin_declaration.py:91: in test_declaration_failure_closes_browser_resources
+    asyncio.run(video.upload(playwright))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+uploader\douyin_uploader\main.py:990: in upload
+    await page.wait_for_timeout(2000)
+E   TypeError: object MagicMock can't be used in 'await' expression</failure></testcase><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_explicit_declaration_failure_blocks_publish" time="0.002" /><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_legacy_positional_runtime_flags_keep_their_meaning" time="0.001"><failure message="AssertionError: False != 'scheduled'">tests\test_douyin_declaration.py:28: in test_legacy_positional_runtime_flags_keep_their_meaning
+    self.assertEqual(video.publish_strategy, "scheduled")
+E   AssertionError: False != 'scheduled'</failure></testcase><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_missing_declaration_does_not_fall_back_to_personal_opinion" time="0.001" /><testcase classname="tests.test_douyin_declaration.DouyinDeclarationTests" name="test_upload_only_sets_explicit_declaration" time="0.001" /><testcase classname="tests.test_kuaishou_publish_dialog" name="test_click_visible_publish_confirm_uses_modal_primary_button" time="1.710" /><testcase classname="tests.test_kuaishou_publish_dialog" name="test_click_visible_publish_confirm_is_noop_without_modal" time="0.987" /><testcase classname="tests.test_sau_bilibili_cli.BilibiliCliTests" name="test_build_parser_accepts_bilibili_login" time="0.016" /><testcase classname="tests.test_sau_bilibili_cli.BilibiliCliTests" name="test_build_parser_requires_tid_for_upload_video" time="0.020" /><testcase classname="tests.test_sau_bilibili_cli.BilibiliCliTests" name="test_dispatch_bilibili_check_prints_valid" time="0.002" /><testcase classname="tests.test_sau_bilibili_cli.BilibiliCliTests" name="test_login_bilibili_account_returns_friendly_message_without_terminal" time="0.001" /><testcase classname="tests.test_sau_bilibili_cli.BilibiliCliTests" name="test_upload_bilibili_video_passes_thumbnail_to_biliup" time="0.003" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_build_parser_accepts_xiaohongshu_login" time="0.020" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_douyin_request_legacy_positional_runtime_flags_keep_their_meaning" time="0.001" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_douyin_upload_video_accepts_desc" time="0.020" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_douyin_upload_video_accepts_dual_thumbnail_aspects" time="0.019" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_douyin_upload_video_accepts_explicit_declaration" time="0.022" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_douyin_upload_video_has_no_implicit_declaration" time="0.018" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_kuaishou_upload_note_accepts_title_and_note" time="0.018" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_tencent_upload_video_accepts_dual_thumbnail_aspects" time="0.022" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_xiaohongshu_upload_note_accepts_headed" time="0.018" /><testcase classname="tests.test_sau_browser_cli.BrowserCliParserTests" name="test_xiaohongshu_upload_video_defaults_to_headless" time="0.018" /><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_douyin_upload_note_uses_new_request_fields" time="0.001"><failure message="AttributeError: 'Namespace' object has no attribute 'notef'. Did you mean: 'note'?">tests\test_sau_browser_cli.py:243: in test_dispatch_douyin_upload_note_uses_new_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1081: in dispatch
+    if args.notef:
+       ^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'notef'. Did you mean: 'note'?</failure></testcase><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_douyin_upload_video_uses_dual_thumbnail_request_fields" time="0.001"><failure message="AttributeError: 'Namespace' object has no attribute 'collection'">tests\test_sau_browser_cli.py:269: in test_dispatch_douyin_upload_video_uses_dual_thumbnail_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1072: in dispatch
+    collection_name=args.collection,
+                    ^^^^^^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'collection'</failure></testcase><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_tencent_upload_video_uses_dual_thumbnail_request_fields" time="0.001"><failure message="AttributeError: 'Namespace' object has no attribute 'collection'">tests\test_sau_browser_cli.py:296: in test_dispatch_tencent_upload_video_uses_dual_thumbnail_request_fields
+    asyncio.run(sau_cli.dispatch(args))
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+sau_cli.py:1279: in dispatch
+    collection_name=args.collection,
+                    ^^^^^^^^^^^^^^^
+E   AttributeError: 'Namespace' object has no attribute 'collection'</failure></testcase><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_xiaohongshu_check_prints_valid" time="0.002" /><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_xiaohongshu_upload_note_uses_headless_request" time="0.002" /><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_dispatch_xiaohongshu_upload_video_uses_headed_request" time="0.001" /><testcase classname="tests.test_sau_browser_cli.BrowserCliDispatchTests" name="test_upload_tencent_video_forwards_collection_name_to_uploader" time="0.002" /><testcase classname="tests.test_tencent_verification_dialog" name="test_wait_for_realtime_verification_saves_qr_and_resumes" time="1.115" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_creator_urls_keep_xiaohongshu_domain_by_default" time="0.002" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_creator_urls_use_configured_rednote_domain" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_find_xhs_qrcode_locator_prefers_scan_sibling_inside_login_box" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_note_title_defaults_do_not_override_explicit_title" time="0.000" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_note_uploader_exists_and_validates_required_fields" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_setup_returns_detail_when_cookie_invalid_without_handle" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_setup_uses_login_flow_when_handle_is_true" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_video_fill_meta_can_fill_first_tag_without_desc" time="0.001" /><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_video_fill_meta_uses_desc_then_first_tag" time="0.001"><failure message="AssertionError: Lists differ: [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)] != [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]&#10;&#10;First differing element 0:&#10;('wait_for', {'state': 'visible', 'timeout': 4000})&#10;('wait_for', {'state': 'visible', 'timeout': 2000})&#10;&#10;- [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)]&#10;?                                               ^&#10;&#10;+ [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]&#10;?                                               ^">tests\test_xiaohongshu_uploader.py:244: in test_video_fill_meta_uses_desc_then_first_tag
+    self.assertEqual(
+E   AssertionError: Lists differ: [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)] != [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]
+E   
+E   First differing element 0:
+E   ('wait_for', {'state': 'visible', 'timeout': 4000})
+E   ('wait_for', {'state': 'visible', 'timeout': 2000})
+E   
+E   - [('wait_for', {'state': 'visible', 'timeout': 4000}), ('click',)]
+E   ?                                               ^
+E   
+E   + [('wait_for', {'state': 'visible', 'timeout': 2000}), ('click',)]
+E   ?                                               ^</failure></testcase><testcase classname="tests.test_xiaohongshu_uploader.XiaohongshuUploaderTests" name="test_video_validate_upload_args_normalizes_video_and_thumbnail" time="0.004" /></testsuite></testsuites>
