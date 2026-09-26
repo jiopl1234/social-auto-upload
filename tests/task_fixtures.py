@@ -10,6 +10,11 @@ from typing import Any, Mapping
 from orchestrator.service import TaskService
 
 
+EXPECTED_DELIVERY_PATHS = (
+    ("douyin", "video"), ("douyin", "note"), ("xiaohongshu", "video"),
+    ("xiaohongshu", "note"), ("tencent", "video"),
+)
+
 VIDEO_BYTES = (
     b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2"
     b"\x00\x00\x00\x08mdat"

@@ -12,15 +12,13 @@ import time
 import pytest
 
 from orchestrator.locking import process_identity, process_state
-from tests.task_fixtures import make_manifest, make_service
+from tests.task_fixtures import EXPECTED_DELIVERY_PATHS, make_manifest, make_service
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROCESS_SCRIPT = ROOT / "tests" / "fixtures" / "delivery_worker_process.py"
 PYTHON = getattr(sys, "_base_executable", sys.executable)
 WAIT_SECONDS = 10.0
-PATHS = [("douyin", "video"), ("douyin", "note"), ("xiaohongshu", "video"),
-         ("xiaohongshu", "note"), ("tencent", "video")]
 
 
 def wait_json(path: Path, process: subprocess.Popen) -> dict:
@@ -130,7 +128,7 @@ class DeliveryProcesses:
             process.communicate(timeout=WAIT_SECONDS)
 
 
-@pytest.mark.parametrize("platform,kind", PATHS)
+@pytest.mark.parametrize("platform,kind", EXPECTED_DELIVERY_PATHS)
 def test_prepare_crash_retries_within_configured_limit_without_early_delivery(tmp_path, platform, kind):
     service = make_service(tmp_path)
     queued = service.enqueue(make_manifest(tmp_path, key="prepare-crash", platform=platform, content_type=kind))
@@ -158,7 +156,7 @@ def test_prepare_crash_retries_within_configured_limit_without_early_delivery(tm
         ]
 
 
-@pytest.mark.parametrize("platform,kind", PATHS)
+@pytest.mark.parametrize("platform,kind", EXPECTED_DELIVERY_PATHS)
 def test_crash_after_submission_boundary_before_final_action_is_read_only_unknown(tmp_path, platform, kind):
     service = make_service(tmp_path)
     queued = service.enqueue(make_manifest(tmp_path, key="before-final-action", platform=platform, content_type=kind))
@@ -196,7 +194,7 @@ def test_crash_after_submission_boundary_before_final_action_is_read_only_unknow
         ]
 
 
-@pytest.mark.parametrize("platform,kind", PATHS)
+@pytest.mark.parametrize("platform,kind", EXPECTED_DELIVERY_PATHS)
 def test_crash_after_remote_write_before_receipt_confirms_original_attempt(tmp_path, platform, kind):
     service = make_service(tmp_path)
     queued = service.enqueue(make_manifest(tmp_path, key="receipt-lost", platform=platform, content_type=kind))

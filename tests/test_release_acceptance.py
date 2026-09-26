@@ -6,18 +6,14 @@ import pytest
 
 from orchestrator.service import TaskService
 from tests.platform_fixture import CreatorSite, fixture_adapter
-from tests.task_fixtures import make_manifest, make_service
+from tests.task_fixtures import EXPECTED_DELIVERY_PATHS, make_manifest, make_service
 from tests.test_job_cli import run_jobs
-
-
-PATHS = [("douyin", "video"), ("douyin", "note"), ("xiaohongshu", "video"),
-         ("xiaohongshu", "note"), ("tencent", "video")]
 
 
 def test_capabilities_separate_offline_evidence_from_unverified_production(tmp_path):
     completed, report = run_jobs(tmp_path / "jobs.sqlite3", "capabilities")
     assert completed.returncode == 0
-    assert {(p["platform"], p["content_type"]) for p in report["capabilities"]} == set(PATHS)
+    assert {(p["platform"], p["content_type"]) for p in report["capabilities"]} == set(EXPECTED_DELIVERY_PATHS)
     for path in report["capabilities"]:
         assert path["offline_verified"] is True
         assert path["offline_evidence"] == "synthetic_dom_and_task_protocol"
@@ -26,7 +22,7 @@ def test_capabilities_separate_offline_evidence_from_unverified_production(tmp_p
         assert path["missing_evidence"] == ["stable_account_id", "per_asset_processing", "work_detail_readback"]
 
 
-@pytest.mark.parametrize("platform,kind,cancel", [(p, k, False) for p, k in PATHS] +
+@pytest.mark.parametrize("platform,kind,cancel", [(p, k, False) for p, k in EXPECTED_DELIVERY_PATHS] +
                          [(p, "video", True) for p in ("douyin", "xiaohongshu", "tencent")])
 def test_delayed_response_and_cancel_preserve_one_delivery(tmp_path, platform, kind, cancel):
     service = make_service(tmp_path)
