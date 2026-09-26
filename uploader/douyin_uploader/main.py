@@ -1116,12 +1116,20 @@ class DouYinVideo(DouYinBaseUploader):
             douyin_logger.success(_msg("🥳", "cookie 更新完毕"))
             await asyncio.sleep(2)
         finally:
+            operation_failed = sys.exc_info()[0] is not None
+            close_error: BaseException | None = None
             for resource in (context, browser):
                 if resource is not None:
                     try:
                         await resource.close()
-                    except Exception as exc:
+                    except BaseException as exc:
                         douyin_logger.warning(f"浏览器资源关闭失败: {type(exc).__name__}")
+                        if close_error is None:
+                            close_error = exc
+            if close_error is not None and not operation_failed:
+                if not isinstance(close_error, Exception):
+                    raise close_error
+                raise RuntimeError("Douyin browser resource shutdown could not be confirmed") from close_error
 
     async def douyin_upload_video(self):
         async with async_playwright() as playwright:

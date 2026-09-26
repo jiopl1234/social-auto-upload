@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 
 import pytest
@@ -114,3 +115,16 @@ def test_executor_that_loses_ownership_cannot_write_or_finish_the_attempt(tmp_pa
     assert target.closed == 1
     assert service.status(job["job_id"])["status"] == "PREPARING"
     assert [e["status"] for e in service.events(job["job_id"])] == ["QUEUED", "PREPARING"]
+
+
+def test_malformed_owner_record_is_a_controlled_block_without_a_new_attempt(tmp_path):
+    service = TaskService(tmp_path / "jobs.sqlite3", runtime_dir=tmp_path / "runtime")
+    job = service.enqueue(manifest())
+    lease = service.maintenance("douyin", "creator")
+    lease.path.parent.mkdir(parents=True)
+    lease.path.write_text(json.dumps({"active": True, "pid": "damaged"}), encoding="utf-8")
+    with pytest.raises(TaskError) as caught:
+        asyncio.run(service.run_once(adapters={"douyin": PreparedTarget()}, job_id=job["job_id"]))
+    assert caught.value.code == "RESOURCES_UNCONFIRMED"
+    assert service.status(job["job_id"])["status"] == "QUEUED"
+    assert service.attempts(job["job_id"]) == []

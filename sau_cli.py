@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Sequence, cast
 
 from conf import BASE_DIR
+from orchestrator.ownership import AccountLease, default_runtime_dir
 
 PUBLISH_STRATEGY_IMMEDIATE = "immediate"
 PUBLISH_STRATEGY_SCHEDULED = "scheduled"
@@ -238,19 +239,27 @@ def parse_schedule(raw_schedule: str | None) -> datetime | int:
 
 
 async def login_douyin_account(account_name: str, headless: bool = True) -> dict:
-    account_file = resolve_account_file("douyin", account_name)
-    from uploader.douyin_uploader.main import douyin_setup
+    with AccountLease(default_runtime_dir(), "douyin", account_name) as lease:
+        account_file = resolve_account_file("douyin", account_name)
+        from uploader.douyin_uploader.main import douyin_setup
 
-    return cast(dict, await douyin_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_started()
+        result = cast(dict, await douyin_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_closed()
+        return result
 
 
 async def check_douyin_account(account_name: str) -> bool:
-    account_file = resolve_account_file("douyin", account_name)
-    if not account_file.exists():
-        return False
-    from uploader.douyin_uploader.main import cookie_auth as douyin_cookie_auth
+    with AccountLease(default_runtime_dir(), "douyin", account_name) as lease:
+        account_file = resolve_account_file("douyin", account_name)
+        if not account_file.exists():
+            return False
+        from uploader.douyin_uploader.main import cookie_auth as douyin_cookie_auth
 
-    return await douyin_cookie_auth(str(account_file))
+        lease.resources_started()
+        result = await douyin_cookie_auth(str(account_file))
+        lease.resources_closed()
+        return result
 
 
 async def login_kuaishou_account(account_name: str, headless: bool = True) -> dict:
@@ -270,19 +279,27 @@ async def check_kuaishou_account(account_name: str) -> bool:
 
 
 async def login_xiaohongshu_account(account_name: str, headless: bool = True) -> dict:
-    account_file = resolve_account_file("xiaohongshu", account_name)
-    from uploader.xiaohongshu_uploader.main import xiaohongshu_setup
+    with AccountLease(default_runtime_dir(), "xiaohongshu", account_name) as lease:
+        account_file = resolve_account_file("xiaohongshu", account_name)
+        from uploader.xiaohongshu_uploader.main import xiaohongshu_setup
 
-    return cast(dict, await xiaohongshu_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_started()
+        result = cast(dict, await xiaohongshu_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_closed()
+        return result
 
 
 async def check_xiaohongshu_account(account_name: str) -> bool:
-    account_file = resolve_account_file("xiaohongshu", account_name)
-    if not account_file.exists():
-        return False
-    from uploader.xiaohongshu_uploader.main import cookie_auth as xiaohongshu_cookie_auth
+    with AccountLease(default_runtime_dir(), "xiaohongshu", account_name) as lease:
+        account_file = resolve_account_file("xiaohongshu", account_name)
+        if not account_file.exists():
+            return False
+        from uploader.xiaohongshu_uploader.main import cookie_auth as xiaohongshu_cookie_auth
 
-    return await xiaohongshu_cookie_auth(str(account_file))
+        lease.resources_started()
+        result = await xiaohongshu_cookie_auth(str(account_file))
+        lease.resources_closed()
+        return result
 
 
 async def login_bilibili_account(account_name: str) -> dict:
@@ -320,19 +337,27 @@ async def check_bilibili_account(account_name: str) -> bool:
 
 
 async def login_tencent_account(account_name: str, headless: bool = True) -> dict:
-    account_file = resolve_account_file("tencent", account_name)
-    from uploader.tencent_uploader.main import tencent_setup
+    with AccountLease(default_runtime_dir(), "tencent", account_name) as lease:
+        account_file = resolve_account_file("tencent", account_name)
+        from uploader.tencent_uploader.main import tencent_setup
 
-    return cast(dict, await tencent_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_started()
+        result = cast(dict, await tencent_setup(str(account_file), handle=True, return_detail=True, headless=headless))
+        lease.resources_closed()
+        return result
 
 
 async def check_tencent_account(account_name: str) -> bool:
-    account_file = resolve_account_file("tencent", account_name)
-    if not account_file.exists():
-        return False
-    from uploader.tencent_uploader.main import cookie_auth as tencent_cookie_auth
+    with AccountLease(default_runtime_dir(), "tencent", account_name) as lease:
+        account_file = resolve_account_file("tencent", account_name)
+        if not account_file.exists():
+            return False
+        from uploader.tencent_uploader.main import cookie_auth as tencent_cookie_auth
 
-    return await tencent_cookie_auth(str(account_file))
+        lease.resources_started()
+        result = await tencent_cookie_auth(str(account_file))
+        lease.resources_closed()
+        return result
 
 
 async def login_youtube_account(account_name: str, headless: bool = False) -> dict:
@@ -378,10 +403,17 @@ async def upload_youtube_video(request: YouTubeVideoUploadRequest) -> Path:
 
 
 async def upload_video(request: DouyinVideoUploadRequest) -> Path:
+    with AccountLease(default_runtime_dir(), "douyin", request.account_name) as lease:
+        return await _upload_video_with_lease(request, lease)
+
+
+async def _upload_video_with_lease(request: DouyinVideoUploadRequest, lease: AccountLease) -> Path:
     account_file = resolve_account_file("douyin", request.account_name)
     from uploader.douyin_uploader.main import DouYinVideo, douyin_setup
 
+    lease.resources_started()
     is_ready = await douyin_setup(str(account_file), handle=False)
+    lease.resources_closed()
     if not is_ready:
         raise RuntimeError(
             f"Douyin cookie is missing or expired: {account_file}. Run `sau douyin login --account {request.account_name}` first."
@@ -408,15 +440,24 @@ async def upload_video(request: DouyinVideoUploadRequest) -> Path:
         headless=request.headless,
         collection_name=request.collection_name,
     )
+    lease.resources_started()
     await app.douyin_upload_video()
+    lease.resources_closed()
     return account_file
 
 
 async def upload_note(request: DouyinNoteUploadRequest) -> Path:
+    with AccountLease(default_runtime_dir(), "douyin", request.account_name) as lease:
+        return await _upload_note_with_lease(request, lease)
+
+
+async def _upload_note_with_lease(request: DouyinNoteUploadRequest, lease: AccountLease) -> Path:
     account_file = resolve_account_file("douyin", request.account_name)
     from uploader.douyin_uploader.main import DouYinNote, douyin_setup
 
+    lease.resources_started()
     is_ready = await douyin_setup(str(account_file), handle=False)
+    lease.resources_closed()
     if not is_ready:
         raise RuntimeError(
             f"Douyin cookie is missing or expired: {account_file}. Run `sau douyin login --account {request.account_name}` first."
@@ -434,7 +475,9 @@ async def upload_note(request: DouyinNoteUploadRequest) -> Path:
         headless=request.headless,
         bgm=request.bgm,
     )
+    lease.resources_started()
     await app.douyin_upload_note()
+    lease.resources_closed()
     return account_file
 
 
@@ -491,10 +534,17 @@ async def upload_kuaishou_note(request: KuaishouNoteUploadRequest) -> Path:
 
 
 async def upload_xiaohongshu_video(request: XiaohongshuVideoUploadRequest) -> Path:
+    with AccountLease(default_runtime_dir(), "xiaohongshu", request.account_name) as lease:
+        return await _upload_xiaohongshu_video_with_lease(request, lease)
+
+
+async def _upload_xiaohongshu_video_with_lease(request: XiaohongshuVideoUploadRequest, lease: AccountLease) -> Path:
     account_file = resolve_account_file("xiaohongshu", request.account_name)
     from uploader.xiaohongshu_uploader.main import XiaoHongShuVideo, xiaohongshu_setup
 
+    lease.resources_started()
     is_ready = await xiaohongshu_setup(str(account_file), handle=False)
+    lease.resources_closed()
     if not is_ready:
         raise RuntimeError(
             f"Xiaohongshu cookie is missing or expired: {account_file}. Run `sau xiaohongshu login --account {request.account_name}` first."
@@ -512,15 +562,24 @@ async def upload_xiaohongshu_video(request: XiaohongshuVideoUploadRequest) -> Pa
         debug=request.debug,
         headless=request.headless,
     )
+    lease.resources_started()
     await app.main()
+    lease.resources_closed()
     return account_file
 
 
 async def upload_xiaohongshu_note(request: XiaohongshuNoteUploadRequest) -> Path:
+    with AccountLease(default_runtime_dir(), "xiaohongshu", request.account_name) as lease:
+        return await _upload_xiaohongshu_note_with_lease(request, lease)
+
+
+async def _upload_xiaohongshu_note_with_lease(request: XiaohongshuNoteUploadRequest, lease: AccountLease) -> Path:
     account_file = resolve_account_file("xiaohongshu", request.account_name)
     from uploader.xiaohongshu_uploader.main import XiaoHongShuNote, xiaohongshu_setup
 
+    lease.resources_started()
     is_ready = await xiaohongshu_setup(str(account_file), handle=False)
+    lease.resources_closed()
     if not is_ready:
         raise RuntimeError(
             f"Xiaohongshu cookie is missing or expired: {account_file}. Run `sau xiaohongshu login --account {request.account_name}` first."
@@ -538,7 +597,9 @@ async def upload_xiaohongshu_note(request: XiaohongshuNoteUploadRequest) -> Path
         debug=request.debug,
         headless=request.headless,
     )
+    lease.resources_started()
     await app.main()
+    lease.resources_closed()
     return account_file
 
 
@@ -577,10 +638,17 @@ async def upload_bilibili_video(request: BilibiliVideoUploadRequest) -> Path:
 
 
 async def upload_tencent_video(request: TencentVideoUploadRequest) -> Path:
+    with AccountLease(default_runtime_dir(), "tencent", request.account_name) as lease:
+        return await _upload_tencent_video_with_lease(request, lease)
+
+
+async def _upload_tencent_video_with_lease(request: TencentVideoUploadRequest, lease: AccountLease) -> Path:
     account_file = resolve_account_file("tencent", request.account_name)
     from uploader.tencent_uploader.main import TencentVideo, tencent_setup
 
+    lease.resources_started()
     is_ready = await tencent_setup(str(account_file), handle=False)
+    lease.resources_closed()
     if not is_ready:
         raise RuntimeError(
             f"Tencent/WeChat Channels cookie is missing or expired: {account_file}. "
@@ -609,7 +677,9 @@ async def upload_tencent_video(request: TencentVideoUploadRequest) -> Path:
         headless=request.headless,
         collection_name=request.collection_name,
     )
+    lease.resources_started()
     await app.tencent_upload_video()
+    lease.resources_closed()
     return account_file
 
 

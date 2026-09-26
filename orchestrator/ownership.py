@@ -34,6 +34,20 @@ class AccountLease:
             value = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(value, dict) or not isinstance(value.get("active"), bool):
                 raise ValueError("Invalid owner record")
+            if value["active"]:
+                if type(value.get("pid")) is not int or value["pid"] <= 0:
+                    raise ValueError("Invalid process id")
+                if any(not isinstance(value.get(key), str) or not value[key]
+                       for key in ("process_identity", "token")):
+                    raise ValueError("Invalid owner identity")
+                if not isinstance(value.get("resources_started"), bool):
+                    raise ValueError("Invalid resource status")
+                processes = value.get("processes")
+                if not isinstance(processes, list) or any(
+                    not isinstance(item, dict) or type(item.get("pid")) is not int or item["pid"] <= 0
+                    or not isinstance(item.get("identity"), str) or not item["identity"] for item in processes
+                ):
+                    raise ValueError("Invalid resource process identities")
             return value
         except FileNotFoundError:
             return None

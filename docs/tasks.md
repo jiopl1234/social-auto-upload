@@ -67,7 +67,7 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 | 4 | 交付键冲突 |
 | 5 | 不支持或尚未接入的能力 |
 
-当前 `run` 返回明确的未接入错误，不调用旧上传流程。任务、尝试、事件和账号绑定使用真实数据库；创建任务与初始事件处于同一事务。升级发现较新数据库版本时拒绝操作，避免静默覆盖。
+当前 `run` 在待执行任务缺少适配器时返回明确的未接入错误，不调用旧上传流程。指定已结束的任务时返回其持久状态，不再次准备，也不宣称已发布。任务、尝试、事件和账号绑定使用真实数据库；创建任务与初始事件处于同一事务。升级发现较新数据库版本时拒绝操作，避免静默覆盖。
 
 ## 执行器与账号维护
 
@@ -75,6 +75,6 @@ Python 公共接口 `TaskService(database, runtime_dir=...)` 提供 `run_once(ad
 
 每次领取建立一个 attempt，并在同一事务内更新任务和事件。适配器每次写入前可调用 `context.assert_owner()`；最终提交也必须通过此所有权检查。创建浏览器前调用 `resources_started()`，成功回收后才能调用 `resources_closed()`；可用 `register_process(pid)` 登记子进程并在关闭时验证其退出。资源关闭不明会阻断账号。`AUTH_REQUIRED`、`IDENTITY_MISMATCH`、`UI_CHANGED` 等暂停原因可通过 `accounts` 查询；同账号后续任务保持排队，其他平台继续执行。
 
-所有本机进程与数据库必须共用一个运行目录。默认是 `~/.sau/runtime`，可以统一设置 `SAU_RUNTIME_DIR`；测试或明确隔离的部署可使用 `--runtime-dir` / Python `runtime_dir`。首版每个平台一个账号，因此锁以平台为粒度，避免同一账号的不同别名或数据库绕过互斥。维护接口 `service.maintenance(platform, account)` 使用相同的操作系统锁。
+所有本机进程与数据库必须共用一个运行目录。默认是 `~/.sau/runtime`，可以统一设置 `SAU_RUNTIME_DIR`；测试或明确隔离的部署可使用 `--runtime-dir` / Python `runtime_dir`。首版每个平台一个账号，因此锁以平台为粒度，避免同一账号的不同别名或数据库绕过互斥。维护接口 `service.maintenance(platform, account)` 及三平台现有 CLI 登录、检查、视频/图文上传入口使用相同的操作系统锁。异常退出的旧流程无法证明资源已关闭时也保留阻断标记；这不把旧上传命令升级为带提交恢复的任务接口。
 
 锁文件不会按时间删除或过期。旧进程存活、身份无法确认、浏览器关闭未确认时均拒绝接管；不要通过删除运行目录或切换运行目录解决账号繁忙。崩溃后的恢复策略将在提交边界票中接入。
