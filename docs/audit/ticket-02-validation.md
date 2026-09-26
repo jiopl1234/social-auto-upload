@@ -20,7 +20,9 @@ uv run --frozen --with pyright pyright orchestrator sau_cli.py tests/test_job_cl
 git diff --check
 ```
 
-审查前完整测试：**56 passed, 20 subtests passed**，18.34 秒。帮助输出修复后的最终结果见下方原始报告。定向 Pyright：0 errors，0 warnings。差异检查通过。
+审查前完整测试：56 passed，20 subtests passed，18.34 秒。帮助输出修复后的最终完整测试：**57 passed, 20 subtests passed**，15.76 秒。定向 Pyright：0 errors，0 warnings。差异检查通过。
+
+另外从临时目录直接调用已安装的 `.venv/Scripts/sau.exe`，确认新任务包被 editable 安装收录；公共 enqueue 返回 QUEUED，作品 ID 为 null。该补充检查使用现有安装，不能冒充一次新的完全隔离依赖安装。
 
 原始结果：[文本](ticket-02-pytest.txt)、[JUnit XML](ticket-02-pytest.xml)。
 
