@@ -37,7 +37,7 @@ py-modules = ["conf", "sau_cli"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["uploader*", "utils*", "myUtils*"]
+include = ["uploader*", "utils*", "myUtils*", "orchestrator*"]
 
 [tool.setuptools.package-data]
 utils = ["stealth.min.js"]

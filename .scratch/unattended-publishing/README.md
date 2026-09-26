@@ -7,7 +7,7 @@ Tracker: local Markdown
 | 票号 | 任务 | 状态 |
 |---|---|---|
 | 01 | [干净安装后可运行三平台 CLI，并恢复旧参数语义](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/01-runnable-cli-and-compatibility.md) | done |
-| 02 | [提交清单后获得可持久查询、可去重的单平台任务](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/02-durable-job-intake-and-query.md) | ready-for-agent |
+| 02 | [提交清单后获得可持久查询、可去重的单平台任务](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/02-durable-job-intake-and-query.md) | in-progress |
 | 03 | [串行执行任务，同账号只允许一个写入者](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/03-single-writer-job-execution.md) | ready-for-agent |
 | 04 | [发布前验证不可变清单、素材版本和声明事实](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/04-immutable-content-preflight.md) | ready-for-agent |
 | 05 | [提交后失联或崩溃时只核对结果，不重新发布](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/05-submission-boundary-and-recovery.md) | ready-for-agent |

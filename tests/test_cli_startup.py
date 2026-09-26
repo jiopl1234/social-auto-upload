@@ -15,6 +15,7 @@ class CliStartupTests(unittest.TestCase):
             checkout = Path(directory)
             shutil.copy2(project / "sau_cli.py", checkout / "sau_cli.py")
             shutil.copy2(project / "conf.example.py", checkout / "conf.py")
+            shutil.copytree(project / "orchestrator", checkout / "orchestrator", ignore=shutil.ignore_patterns("__pycache__"))
             result = subprocess.run(
                 [sys.executable, "-X", "utf8", "-S", str(checkout / "sau_cli.py"), "--help"],
                 cwd=checkout,
@@ -38,6 +39,7 @@ class CliStartupTests(unittest.TestCase):
             checkout = Path(directory)
             shutil.copy2(project / "sau_cli.py", checkout / "sau_cli.py")
             shutil.copy2(project / "conf.example.py", checkout / "conf.py")
+            shutil.copytree(project / "orchestrator", checkout / "orchestrator", ignore=shutil.ignore_patterns("__pycache__"))
             for platform in platforms:
                 for arguments, expected_code in ((["--help"], 0), (["check", "--account", "missing"], 1)):
                     with self.subTest(platform=platform, arguments=arguments):

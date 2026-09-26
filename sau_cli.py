@@ -808,6 +808,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     platform_parsers = parser.add_subparsers(dest="platform", required=True)
 
+    from orchestrator.cli import add_arguments
+
+    add_arguments(platform_parsers.add_parser("jobs", help="Durable unattended publishing tasks"))
+
     douyin_parser = platform_parsers.add_parser("douyin", help="Douyin operations")
     douyin_actions = douyin_parser.add_subparsers(dest="action", required=True)
 
@@ -1048,6 +1052,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def dispatch(args: argparse.Namespace) -> int:
+    if args.platform == "jobs":
+        from orchestrator.cli import dispatch as dispatch_jobs
+
+        return await dispatch_jobs(args)
+
     if args.platform == "douyin":
         if args.action == "login":
             result = await login_douyin_account(args.account, headless=args.headless)
@@ -1455,7 +1464,16 @@ async def dispatch(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    arguments = list(argv) if argv is not None else sys.argv[1:]
+    try:
+        args = parser.parse_args(arguments)
+    except SystemExit as exc:
+        if exc.code and arguments and arguments[0] == "jobs" and "--json" in arguments:
+            from orchestrator.cli import emit_error
+            from orchestrator.errors import TaskError
+
+            return emit_error(TaskError("INVALID_INPUT", "Invalid command arguments"))
+        raise
     try:
         return asyncio.run(dispatch(args))
     except Exception as exc:
