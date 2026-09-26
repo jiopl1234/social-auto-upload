@@ -1,0 +1,24 @@
+# 04、05 号票集成验证
+
+日期：2026-09-26。运行环境：本机 Windows、Python 3.12。范围为已批准的公共 CLI / TaskService，真实 SQLite、受控外部目标与真实子进程；没有读取真实会话或向平台发布。
+
+## 实现与证据
+
+- 04：显式账号绑定、隔离的受管会话、受信素材目录、严格字段与事实校验、素材摘要/版本、准备及提交前预检、递归不可变适配器清单。公共测试覆盖入队拒绝、同键冲突、执行前替换、准备后替换和实际提交数为零。
+- 05：事务记录 SUBMITTING 后才调用最终动作；只读作品匹配与五类平台结果；提交不明不重新上传；有界且仅限确定提交前临时错误的重试；兼容原准备接口与 v1 数据库升级。
+- 强杀子进程覆盖准备阶段、SUBMITTING 后尚未动作、动作已生效但回执未返回，以及 `max_attempts=1`。持久外部目标独立记录交付和读取行为，重启后交付数始终不超过一次。
+- 红绿记录：首个完整交付从 READY 对 COMPLETED 失败转绿；丢回执后只读恢复从 UNKNOWN_COMMIT 对 COMPLETED 失败转绿；有界临时重试从一次对两次失败转绿；真实提交前崩溃从 PREPARING 对 COMPLETED 失败转绿；已结束 READY 无适配器查询的回归从 UNSUPPORTED 转绿。
+
+## 检查
+
+完整命令：`uv run --frozen --with pytest --with pytest-timeout python -m pytest tests -q --timeout=30 --tb=short --junitxml=docs/audit/ticket-04-05-pytest.xml`。
+
+结果：**136 passed, 20 subtests passed**，37.96 秒。原始输出为同目录 `ticket-04-05-pytest.txt` 与 XML。
+
+Pyright 检查 `orchestrator`、`sau_cli.py`、04/05 新测试、更新的任务/进程夹具、账号维护测试与 conftest：**0 errors, 0 warnings**。未宣称所有历史 uploader 类型检查通过。
+
+## 边界
+
+本地文件签名与字段上限属于离线入口规则，不能证明平台转码与当前页面兼容性。配置的稳定账号 ID 仍需后续适配器正向读取；平台身份与只读作品字段尚未在线验证。匹配字段不足或时间精度不兼容时保持 UNKNOWN_COMMIT。新 CLI 尚未装配真实平台任务适配器，`run_at` 等待 12 号票，阶段超时与取消等待 06 号票。此处不声明生产就绪、远端 exactly-once 或零风控。
+
+图证据采用 Tier 2，项目 `C-Users-Chinese-social-auto-upload`；本轮重建到 `2026-09-26T14:07:15Z`，1521 节点、6679 边。核心路径没有记录解析缺口，但工具报告 metadata_changed，因此依赖当前源码与固定提交 diff 补充核验；tests/fixtures 和文档为未索引内容，直接读取。

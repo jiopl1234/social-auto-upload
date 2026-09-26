@@ -126,7 +126,8 @@ def main(config: dict) -> None:
         wait_for_gate(config["gate"])
         return
 
-    service = TaskService(config["db"], runtime_dir=Path(config["runtime"]))
+    service = TaskService(config["db"], runtime_dir=Path(config["runtime"]),
+                          media_roots=[Path(config["media_root"])])
     try:
         if mode == "maintenance":
             with service.maintenance(config["platform"], config["account"]):

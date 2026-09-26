@@ -5,15 +5,12 @@ import sqlite3
 import pytest
 
 from orchestrator.errors import TaskError
-from orchestrator.service import TaskService
+from tests.task_fixtures import make_manifest, make_service
 
 
-def manifest(platform="douyin", account="creator", key="one"):
-    return {
-        "schema_version": 1, "delivery_key": key, "platform": platform,
-        "account": account, "content_type": "video", "title": "Original",
-        "body": "Unchanged body", "tags": [], "media": [],
-    }
+def manifest(tmp_path, platform="douyin", account="creator", key="one"):
+    return make_manifest(tmp_path, platform=platform, account=account, key=key,
+                         title="Original", body="Unchanged body")
 
 
 class PreparedTarget:
@@ -31,8 +28,8 @@ class PreparedTarget:
 
 
 def test_run_records_one_attempt_and_does_not_infer_a_platform_result(tmp_path):
-    service = TaskService(tmp_path / "jobs.sqlite3", runtime_dir=tmp_path / "runtime")
-    job = service.enqueue(manifest())
+    service = make_service(tmp_path)
+    job = service.enqueue(manifest(tmp_path))
     target = PreparedTarget()
     result = asyncio.run(service.run_once(adapters={"douyin": target}))
     assert result is not None
@@ -55,10 +52,10 @@ def test_unconfirmed_resource_shutdown_blocks_account_and_other_platform_proceed
             context.resources_started()
             return await super().prepare(context)
 
-    service = TaskService(tmp_path / "jobs.sqlite3", runtime_dir=tmp_path / "runtime")
-    unsafe = service.enqueue(manifest())
-    skipped = service.enqueue(manifest(key="two"))
-    other = service.enqueue(manifest(platform="xiaohongshu"))
+    service = make_service(tmp_path)
+    unsafe = service.enqueue(manifest(tmp_path))
+    skipped = service.enqueue(manifest(tmp_path, key="two"))
+    other = service.enqueue(manifest(tmp_path, platform="xiaohongshu"))
     unsafe_target, other_target = UnclosedTarget(), PreparedTarget()
     results = asyncio.run(service.run_pending(adapters={"douyin": unsafe_target, "xiaohongshu": other_target}))
     assert {r["job_id"] for r in results} == {unsafe["job_id"], other["job_id"]}
@@ -78,10 +75,10 @@ def test_authentication_pause_skips_same_account_but_runs_other_platform(tmp_pat
             self.prepared.append(context.job_id)
             raise TaskError("AUTH_REQUIRED", "Session verification is required")
 
-    service = TaskService(tmp_path / "jobs.sqlite3", runtime_dir=tmp_path / "runtime")
-    blocked = service.enqueue(manifest())
-    pending = service.enqueue(manifest(key="next"))
-    other = service.enqueue(manifest(platform="tencent"))
+    service = make_service(tmp_path)
+    blocked = service.enqueue(manifest(tmp_path))
+    pending = service.enqueue(manifest(tmp_path, key="next"))
+    other = service.enqueue(manifest(tmp_path, platform="tencent"))
     challenge, healthy = ChallengeTarget(), PreparedTarget()
     results = asyncio.run(service.run_pending(adapters={"douyin": challenge, "tencent": healthy}))
     assert len(results) == 2
@@ -96,8 +93,8 @@ def test_authentication_pause_skips_same_account_but_runs_other_platform(tmp_pat
 
 def test_executor_that_loses_ownership_cannot_write_or_finish_the_attempt(tmp_path):
     database = tmp_path / "jobs.sqlite3"
-    service = TaskService(database, runtime_dir=tmp_path / "runtime")
-    job = service.enqueue(manifest())
+    service = make_service(tmp_path)
+    job = service.enqueue(manifest(tmp_path))
 
     class FencedTarget(PreparedTarget):
         async def prepare(self, context):
@@ -118,10 +115,10 @@ def test_executor_that_loses_ownership_cannot_write_or_finish_the_attempt(tmp_pa
 
 
 def test_malformed_owner_record_is_a_controlled_block_without_a_new_attempt(tmp_path):
-    service = TaskService(tmp_path / "jobs.sqlite3", runtime_dir=tmp_path / "runtime")
-    job = service.enqueue(manifest())
+    service = make_service(tmp_path)
+    job = service.enqueue(manifest(tmp_path))
     lease = service.maintenance("douyin", "creator")
-    lease.path.parent.mkdir(parents=True)
+    lease.path.parent.mkdir(parents=True, exist_ok=True)
     lease.path.write_text(json.dumps({"active": True, "pid": "damaged"}), encoding="utf-8")
     with pytest.raises(TaskError) as caught:
         asyncio.run(service.run_once(adapters={"douyin": PreparedTarget()}, job_id=job["job_id"]))

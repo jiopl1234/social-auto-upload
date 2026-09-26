@@ -11,6 +11,8 @@ from orchestrator.errors import TaskError
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--db", type=Path, default=Path.home() / ".sau" / "tasks.sqlite3")
     parser.add_argument("--runtime-dir", type=Path, help="Shared account-lock directory for all local task databases")
+    parser.add_argument("--media-root", action="append", type=Path, default=[],
+                        help="Trusted local media directory; repeat for more than one root")
     parser.add_argument("--json", action="store_true", help="Emit one structured JSON result")
     actions = parser.add_subparsers(dest="action", required=True)
     enqueue = actions.add_parser("enqueue", help="Persist one delivery without publishing")
@@ -19,6 +21,11 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         actions.add_parser(action).add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
     actions.add_parser("accounts", help="Query account status and pause reasons")
+    bind = actions.add_parser("bind-account", help="Bind one local account to a managed session")
+    bind.add_argument("--platform", dest="account_platform", required=True)
+    bind.add_argument("--account", required=True)
+    bind.add_argument("--expected-id", required=True)
+    bind.add_argument("--session-source", type=Path, required=True)
     run = actions.add_parser("run", help="Execute queued tasks when an adapter is available")
     run.add_argument("--job", dest="job_id")
 
@@ -32,7 +39,7 @@ async def dispatch(args: argparse.Namespace) -> int:
     from orchestrator.service import TaskService
 
     try:
-        service = TaskService(args.db, runtime_dir=args.runtime_dir)
+        service = TaskService(args.db, runtime_dir=args.runtime_dir, media_roots=args.media_root)
         if args.action == "enqueue":
             try:
                 manifest = json.loads(args.manifest.read_text(encoding="utf-8-sig"))
@@ -49,6 +56,8 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = {"jobs": service.list_jobs()}
         elif args.action == "accounts":
             result = {"accounts": service.accounts()}
+        elif args.action == "bind-account":
+            result = service.bind_account(args.account_platform, args.account, args.expected_id, args.session_source)
         elif args.action == "run":
             if args.job_id is None:
                 raise TaskError("UNSUPPORTED", "No platform task adapters are connected yet")

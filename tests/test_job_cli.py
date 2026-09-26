@@ -5,6 +5,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from tests.task_fixtures import make_manifest, make_service
+
 
 PROJECT = Path(__file__).resolve().parents[1]
 
@@ -12,6 +14,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 def run_jobs(db, *arguments):
     result = subprocess.run(
         [sys.executable, "-X", "utf8", "-m", "sau_cli", "jobs", "--db", str(db),
+         "--runtime-dir", str(db.parent / "runtime"), "--media-root", str(db.parent / "media"),
          "--json", *map(str, arguments)],
         cwd=PROJECT, stdin=subprocess.DEVNULL, capture_output=True,
         text=True, encoding="utf-8", timeout=15,
@@ -21,25 +24,25 @@ def run_jobs(db, *arguments):
 
 
 def write_manifest(directory, **overrides):
-    manifest = {
-        "schema_version": 1,
-        "delivery_key": "original-episode-001",
-        "platform": "douyin",
-        "account": "creator",
-        "content_type": "video",
-        "title": "原创作品",
-        "body": "第一集正文",
-        "tags": [],
-        "media": [],
-    }
-    manifest.update(overrides)
+    manifest = make_manifest(directory, key="original-episode-001", **overrides)
     path = directory / "manifest.json"
     path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     return path
 
 
+def bind_local_account(db):
+    source = db.parent / "source.json"
+    source.write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
+    completed, account = run_jobs(
+        db, "bind-account", "--platform", "douyin", "--account", "creator",
+        "--expected-id", "douyin:creator", "--session-source", source,
+    )
+    assert completed.returncode == 0, account
+
+
 def test_enqueue_survives_a_new_process_and_is_not_published(tmp_path):
     db = tmp_path / "tasks.sqlite3"
+    bind_local_account(db)
     manifest = write_manifest(tmp_path)
     completed, queued = run_jobs(db, "enqueue", "--manifest", manifest)
     assert completed.returncode == 0, completed.stderr
@@ -61,6 +64,7 @@ def test_enqueue_survives_a_new_process_and_is_not_published(tmp_path):
 
 def test_duplicate_delivery_is_stable_but_conflicting_content_is_rejected(tmp_path):
     db = tmp_path / "tasks.sqlite3"
+    bind_local_account(db)
     manifest = write_manifest(tmp_path)
     _, first = run_jobs(db, "enqueue", "--manifest", manifest)
     content = json.loads(manifest.read_text(encoding="utf-8"))
@@ -81,6 +85,7 @@ def test_duplicate_delivery_is_stable_but_conflicting_content_is_rejected(tmp_pa
 
 def test_competing_enqueue_processes_return_one_delivery(tmp_path):
     db = tmp_path / "tasks.sqlite3"
+    bind_local_account(db)
     manifest = write_manifest(tmp_path)
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: run_jobs(db, "enqueue", "--manifest", manifest), range(4)))
@@ -92,6 +97,7 @@ def test_competing_enqueue_processes_return_one_delivery(tmp_path):
 
 def test_event_write_failure_rolls_back_delivery(tmp_path):
     db = tmp_path / "tasks.sqlite3"
+    bind_local_account(db)
     manifest = write_manifest(tmp_path)
     run_jobs(db, "list")
     # Fault injection only; all resulting state is observed through the CLI.
@@ -114,6 +120,7 @@ def test_errors_are_json_and_unconnected_execution_does_not_publish(tmp_path):
     completed, missing = run_jobs(db, "status", "missing")
     assert completed.returncode == 3
     assert missing["error"]["code"] == "NOT_FOUND"
+    bind_local_account(db)
     completed, invalid = run_jobs(db, "enqueue")
     assert completed.returncode == 2
     assert invalid["error"]["code"] == "INVALID_INPUT"
@@ -159,7 +166,7 @@ def test_account_pause_reason_is_queryable_from_machine_cli(tmp_path):
     from orchestrator.service import TaskService
 
     database = tmp_path / "jobs.sqlite3"
-    service = TaskService(database, runtime_dir=tmp_path / "runtime")
+    service = make_service(tmp_path)
     # Simulates a platform challenge through the public worker boundary.
     import asyncio
     from orchestrator.errors import TaskError

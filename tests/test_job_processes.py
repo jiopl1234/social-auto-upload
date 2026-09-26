@@ -12,6 +12,7 @@ import time
 
 from orchestrator.locking import process_state
 from orchestrator.service import TaskService
+from tests.task_fixtures import bind_test_account, make_manifest, make_service
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,18 +21,9 @@ PYTHON = getattr(sys, "_base_executable", sys.executable)
 WAIT_SECONDS = 10.0
 
 
-def manifest(platform: str, account: str, key: str) -> dict:
-    return {
-        "schema_version": 1,
-        "delivery_key": key,
-        "platform": platform,
-        "account": account,
-        "content_type": "video",
-        "title": key,
-        "body": "Local preparation only",
-        "tags": [],
-        "media": [],
-    }
+def manifest(tmp_path: Path, platform: str, account: str, key: str) -> dict:
+    return make_manifest(tmp_path, platform=platform, account=account, key=key,
+                         title=key, body="Local preparation only")
 
 
 def wait_json(path: Path, *, process: subprocess.Popen | None = None) -> dict:
@@ -80,6 +72,7 @@ class ProcessHarness:
             "mode": mode,
             "db": str(db),
             "runtime": str(runtime),
+            "media_root": str(self.directory / "media"),
             "platform": platform,
             "account": account,
             "entered": str(entered),
@@ -159,9 +152,9 @@ class ProcessHarness:
 
 def test_live_owner_stays_exclusive_even_when_its_record_looks_old(tmp_path):
     db, runtime = tmp_path / "jobs.sqlite3", tmp_path / "runtime"
-    service = TaskService(db, runtime_dir=runtime)
-    first = service.enqueue(manifest("douyin", "creator", "first"))
-    second = service.enqueue(manifest("douyin", "creator", "second"))
+    service = make_service(tmp_path)
+    first = service.enqueue(manifest(tmp_path, "douyin", "creator", "first"))
+    second = service.enqueue(manifest(tmp_path, "douyin", "creator", "second"))
 
     with ProcessHarness(tmp_path) as harness:
         owner, owner_cfg = harness.start(
@@ -181,11 +174,10 @@ def test_live_owner_stays_exclusive_even_when_its_record_looks_old(tmp_path):
         assert not Path(contender_cfg["entered"]).exists()
 
         # Fault-inject an old timestamp while the same owner process is alive.
-        owner_records = list((runtime / "owners").glob("*.json"))
-        assert len(owner_records) == 1
-        record = json.loads(owner_records[0].read_text(encoding="utf-8"))
+        owner_record = service.maintenance("douyin", "creator").path
+        record = json.loads(owner_record.read_text(encoding="utf-8"))
         record["created_at"] = 0
-        owner_records[0].write_text(json.dumps(record), encoding="utf-8")
+        owner_record.write_text(json.dumps(record), encoding="utf-8")
         aged, aged_cfg = harness.start(
             "aged-contender", mode="run", db=db, runtime=runtime,
             platform="douyin", account="creator", job_id=second["job_id"],
@@ -218,11 +210,15 @@ def test_live_owner_stays_exclusive_even_when_its_record_looks_old(tmp_path):
 def test_shared_runtime_excludes_aliases_across_databases(tmp_path):
     runtime = tmp_path / "runtime"
     first_db, second_db = tmp_path / "one.sqlite3", tmp_path / "two.sqlite3"
-    first_service = TaskService(first_db, runtime_dir=runtime)
-    second_service = TaskService(second_db, runtime_dir=runtime)
-    first = first_service.enqueue(manifest("douyin", "primary", "first"))
-    alias = second_service.enqueue(manifest("douyin", "alias", "alias"))
-    other_platform = second_service.enqueue(manifest("xiaohongshu", "creator", "other"))
+    media_roots = [tmp_path / "media"]
+    first_service = TaskService(first_db, runtime_dir=runtime, media_roots=media_roots)
+    second_service = TaskService(second_db, runtime_dir=runtime, media_roots=media_roots)
+    bind_test_account(first_service, tmp_path, "douyin", "primary")
+    bind_test_account(second_service, tmp_path, "douyin", "alias")
+    bind_test_account(second_service, tmp_path, "xiaohongshu", "creator")
+    first = first_service.enqueue(manifest(tmp_path, "douyin", "primary", "first"))
+    alias = second_service.enqueue(manifest(tmp_path, "douyin", "alias", "alias"))
+    other_platform = second_service.enqueue(manifest(tmp_path, "xiaohongshu", "creator", "other"))
 
     with ProcessHarness(tmp_path) as harness:
         owner, owner_cfg = harness.start(
@@ -258,9 +254,9 @@ def test_shared_runtime_excludes_aliases_across_databases(tmp_path):
 
 def test_maintenance_uses_worker_lock_without_blocking_other_platform(tmp_path):
     db, runtime = tmp_path / "jobs.sqlite3", tmp_path / "runtime"
-    service = TaskService(db, runtime_dir=runtime)
-    same = service.enqueue(manifest("douyin", "creator", "same"))
-    other = service.enqueue(manifest("tencent", "creator", "other"))
+    service = make_service(tmp_path)
+    same = service.enqueue(manifest(tmp_path, "douyin", "creator", "same"))
+    other = service.enqueue(manifest(tmp_path, "tencent", "creator", "other"))
 
     with ProcessHarness(tmp_path) as harness:
         maintenance, maintenance_cfg = harness.start(
@@ -296,9 +292,9 @@ def test_maintenance_uses_worker_lock_without_blocking_other_platform(tmp_path):
 
 def test_killed_worker_with_live_registered_resource_refuses_takeover(tmp_path):
     db, runtime = tmp_path / "jobs.sqlite3", tmp_path / "runtime"
-    service = TaskService(db, runtime_dir=runtime)
-    first = service.enqueue(manifest("douyin", "creator", "first"))
-    second = service.enqueue(manifest("douyin", "creator", "second"))
+    service = make_service(tmp_path)
+    first = service.enqueue(manifest(tmp_path, "douyin", "creator", "first"))
+    second = service.enqueue(manifest(tmp_path, "douyin", "creator", "second"))
 
     with ProcessHarness(tmp_path) as harness:
         owner, owner_cfg = harness.start(
