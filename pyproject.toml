@@ -33,6 +33,9 @@ web = [
 [tool.uv]
 package = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.setuptools]
 py-modules = ["conf", "sau_cli"]
 include-package-data = true
@@ -42,3 +45,10 @@ include = ["uploader*", "utils*", "myUtils*", "orchestrator*"]
 
 [tool.setuptools.package-data]
 utils = ["stealth.min.js"]
+
+[dependency-groups]
+dev = [
+    "pyright[nodejs]>=1.1.414",
+    "pytest>=9.1.1",
+    "pytest-timeout>=2.4.0",
+]

@@ -11,6 +11,8 @@
 
 ## For Humans
 
+本分支保留抖音、小红书的 `upload-video` / `upload-note` 和视频号的 `upload-video` 命令参数兼容，但有效参数调用会返回 `UNSUPPORTED` 迁移错误，不会执行旧发布流程。实际发布入口是 [持久发布任务](tasks.md)（`sau jobs`）；目前缺少真实平台的身份与工作流验证证据，生产发布能力仍受限制。安装与离线验收通过不代表可以真实发布。独立的手动登录、账号检查命令仍可使用。
+
 ### 1. 克隆项目
 
 ```bash
@@ -108,7 +110,31 @@ sau bilibili --help
 - 当前虚拟环境是否已激活
 - 是否执行过 `uv pip install -e .`
 
-### 7. 抖音主线示例
+### 6A. 运行离线验收
+
+首次运行时仅在缺少 `conf.py` 时从示例创建；已有本地配置不会被覆盖。先安装锁定的开发依赖，再用同一个入口运行 `tests/` 全部离线用例和 `orchestrator/`、`sau_cli.py` 类型检查：
+
+Windows PowerShell：
+
+```powershell
+if (-not (Test-Path conf.py)) { Copy-Item conf.example.py conf.py }
+uv sync --frozen --group dev
+uv run --frozen --offline --no-sync python scripts/check_offline.py --report-dir .scratch/offline-acceptance
+```
+
+Linux / macOS：
+
+```bash
+test -f conf.py || cp conf.example.py conf.py
+uv sync --frozen --group dev
+uv run --frozen --offline --no-sync python scripts/check_offline.py --report-dir .scratch/offline-acceptance
+```
+
+脚本只使用本地测试夹具和临时运行目录，不读取真实 Cookie、不访问平台后台，也不执行真实发布。它会先按测试使用的规则检查本机 Chrome、Chromium 或 Edge 可执行文件；缺少浏览器时直接失败，不把浏览器测试的跳过记作通过。Windows 检查常规安装路径，Linux/macOS 检查 `PATH`；单独安装 Patchright 浏览器包不一定满足这项检查。`--report-dir` 可省略；指定时固定写入 `offline-pytest.txt`、`offline-pytest.xml` 和 `offline-pyright.txt`。只检查环境或测试收集可分别加 `--check-browser`、`--collect-only`。默认 pytest 只收集 `tests/`，不会运行 `examples/test_alipay_upload.py` 这个真实平台示例。
+
+### 7. 抖音旧命令参数示例
+
+以下 `login`、`check` 用于账号维护；`upload-video`、`upload-note` 仅展示兼容参数，调用会返回迁移错误。发布任务请见 [任务命令](tasks.md)。
 
 ```bash
 sau douyin login --account <account_name>
@@ -123,12 +149,7 @@ sau douyin upload-note --account <account_name> --images videos/demo1.png videos
 sau douyin upload-note --account <account_name> --images videos/demo1.png videos/demo2.png --title "图文标题" --note $noteText --tags 'tag1,tag2' --bgm '音乐名称'
 ``` 
 
-抖音短信验证码补充说明：
-
-- 视频发布过程中如果触发短信二次验证，程序会优先读取项目根目录下的 `verify_code.txt`
-- 如果当前是你手动运行的交互式终端，没提供 `verify_code.txt` 时，CLI 会直接提示你在终端输入验证码
-- 如果是 agent 或自动化桥接场景，仍然可以继续通过写入 `verify_code.txt` 来提供验证码
-- 验证通过后，程序会自动删除 `verify_code.txt`
+任务发布遇到短信或其他身份挑战会暂停，需人工处理账号状态后再按 [任务命令](tasks.md) 查看和处理任务；不会读取 `verify_code.txt` 或在旧上传命令中继续提交。
 
 抖音卡login手动获取cookie:
 
@@ -146,7 +167,9 @@ sau kuaishou upload-video --account <account_name> --file videos/demo.mp4 --titl
 sau kuaishou upload-note --account <account_name> --images videos/demo1.png videos/demo2.png videos/demo.png --title "图文标题" --note "图文正文"
 ```
 
-### 9. 小红书主线示例
+### 9. 小红书旧命令参数示例
+
+以下 `login`、`check` 用于账号维护；`upload-video`、`upload-note` 仅展示兼容参数，调用会返回迁移错误。发布任务请见 [任务命令](tasks.md)。视频号 `upload-video` 也遵循同一迁移约定。
 
 ```bash
 sau xiaohongshu login --account <account_name>
@@ -214,23 +237,22 @@ sau xiaohongshu --help
 sau bilibili --help
 ```
 
-6. 如果用户的目标是抖音或快手的登录、cookie 校验、视频上传、图文上传，优先走 CLI：
+6. 抖音、小红书和视频号的手动登录、账号检查仍可使用 CLI；这三个平台的发布应使用 [持久发布任务](tasks.md)（`sau jobs`），并遵守上述真实平台验证限制。快手、Bilibili 的命令按各自说明使用：
 
 ```bash
 sau douyin login
 sau douyin check
-sau douyin upload-video
-sau douyin upload-note
+
+sau xiaohongshu login
+sau xiaohongshu check
+
+sau tencent login
+sau tencent check
 
 sau kuaishou login
 sau kuaishou check
 sau kuaishou upload-video
 sau kuaishou upload-note
-
-sau xiaohongshu login
-sau xiaohongshu check
-sau xiaohongshu upload-video
-sau xiaohongshu upload-note
 
 sau bilibili login
 sau bilibili check

@@ -1,8 +1,10 @@
 # social-auto-upload
 
-`social-auto-upload` 是一个强大的自动化工具，旨在帮助内容创作者和运营者高效地将视频内容一键发布到多个国内外主流社交媒体平台。
-项目实现了对 `抖音`、`Bilibili`、`小红书`、`快手`、`视频号`、`百家号`、`支付宝生活号`、`微博`、`虎扑`、`TikTok` 以及 `YouTube` 等平台的视频上传、定时发布等功能。
-结合各平台 `uploader` 模块，您可以轻松配置和扩展支持的平台，并通过示例脚本快速上手。
+本地任务分支已加入持久清单、防重复提交、账号互斥、只读恢复和本地定时分发，覆盖抖音视频/图文、小红书视频/图文及视频号视频。使用方式见 [任务接口](docs/tasks.md)、[离线验收](docs/install.md#6a-运行离线验收) 和 [本地任务 tracker](.scratch/unattended-publishing/README.md)。
+
+五条路径已通过本地合成页面与任务协议验证，真实平台身份和作品证据仍未验证，生产发布保持受限。原三平台上传命令保留参数解析并返回迁移错误；独立登录与检查入口保留。离线通过不代表零风控或生产就绪。
+
+上游 `social-auto-upload` 还包含 Bilibili、快手、百家号、支付宝生活号、微博、虎扑、TikTok、YouTube 等 uploader 及历史示例；这些路径未纳入本次三平台任务验收。
 
 <img src="media/show/tkupload.gif" alt="tiktok show" width="800"/>
 

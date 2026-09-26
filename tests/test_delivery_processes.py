@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 
+import pytest
+
 from orchestrator.locking import process_identity, process_state
 from tests.task_fixtures import make_manifest, make_service
 
@@ -17,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROCESS_SCRIPT = ROOT / "tests" / "fixtures" / "delivery_worker_process.py"
 PYTHON = getattr(sys, "_base_executable", sys.executable)
 WAIT_SECONDS = 10.0
+PATHS = [("douyin", "video"), ("douyin", "note"), ("xiaohongshu", "video"),
+         ("xiaohongshu", "note"), ("tencent", "video")]
 
 
 def wait_json(path: Path, process: subprocess.Popen) -> dict:
@@ -24,7 +28,9 @@ def wait_json(path: Path, process: subprocess.Popen) -> dict:
     while True:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except (FileNotFoundError, PermissionError):
+            # Windows may briefly deny a read immediately around replacement;
+            # the same bounded handshake deadline still applies.
             pass
         if process.poll() is not None:
             stdout, stderr = process.communicate(timeout=1)
@@ -124,12 +130,13 @@ class DeliveryProcesses:
             process.communicate(timeout=WAIT_SECONDS)
 
 
-def test_prepare_crash_retries_within_configured_limit_without_early_delivery(tmp_path):
+@pytest.mark.parametrize("platform,kind", PATHS)
+def test_prepare_crash_retries_within_configured_limit_without_early_delivery(tmp_path, platform, kind):
     service = make_service(tmp_path)
-    queued = service.enqueue(make_manifest(tmp_path, key="prepare-crash"))
+    queued = service.enqueue(make_manifest(tmp_path, key="prepare-crash", platform=platform, content_type=kind))
     job_id = queued["job_id"]
 
-    with DeliveryProcesses(tmp_path, job_id, "douyin") as workers:
+    with DeliveryProcesses(tmp_path, job_id, platform) as workers:
         first, first_config = workers.start("first", gate_stage="prepare")
         first_stage = workers.stage(first, first_config, "prepare")
         assert service.status(job_id)["status"] == "PREPARING"
@@ -151,12 +158,13 @@ def test_prepare_crash_retries_within_configured_limit_without_early_delivery(tm
         ]
 
 
-def test_crash_after_submission_boundary_before_final_action_is_read_only_unknown(tmp_path):
+@pytest.mark.parametrize("platform,kind", PATHS)
+def test_crash_after_submission_boundary_before_final_action_is_read_only_unknown(tmp_path, platform, kind):
     service = make_service(tmp_path)
-    queued = service.enqueue(make_manifest(tmp_path, key="before-final-action"))
+    queued = service.enqueue(make_manifest(tmp_path, key="before-final-action", platform=platform, content_type=kind))
     job_id = queued["job_id"]
 
-    with DeliveryProcesses(tmp_path, job_id, "douyin") as workers:
+    with DeliveryProcesses(tmp_path, job_id, platform) as workers:
         first, first_config = workers.start("first", gate_stage="before_submit")
         boundary = workers.stage(first, first_config, "before_submit")
         assert service.status(job_id)["status"] == "SUBMITTING"
@@ -188,12 +196,13 @@ def test_crash_after_submission_boundary_before_final_action_is_read_only_unknow
         ]
 
 
-def test_crash_after_remote_write_before_receipt_confirms_original_attempt(tmp_path):
+@pytest.mark.parametrize("platform,kind", PATHS)
+def test_crash_after_remote_write_before_receipt_confirms_original_attempt(tmp_path, platform, kind):
     service = make_service(tmp_path)
-    queued = service.enqueue(make_manifest(tmp_path, key="receipt-lost"))
+    queued = service.enqueue(make_manifest(tmp_path, key="receipt-lost", platform=platform, content_type=kind))
     job_id = queued["job_id"]
 
-    with DeliveryProcesses(tmp_path, job_id, "douyin") as workers:
+    with DeliveryProcesses(tmp_path, job_id, platform) as workers:
         first, first_config = workers.start("first", gate_stage="after_write")
         written = workers.stage(first, first_config, "after_write")
         crossing = service.status(job_id)

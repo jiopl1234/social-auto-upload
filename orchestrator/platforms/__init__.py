@@ -8,6 +8,7 @@ from pathlib import Path
 def capability_report() -> list[dict]:
     return [
         {"platform": platform, "content_type": kind, "status": "restricted",
+         "offline_verified": True, "offline_evidence": "synthetic_dom_and_task_protocol",
          "production_verified": False, "capability_version": "1.0.0",
          "missing_evidence": ["stable_account_id", "per_asset_processing", "work_detail_readback"]}
         for platform, kinds in (("douyin", ("video", "note")),
