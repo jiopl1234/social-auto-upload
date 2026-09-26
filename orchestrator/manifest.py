@@ -17,6 +17,11 @@ MANIFEST_FIELDS = frozenset({
     "title", "body", "tags", "media", "cover", "collection", "facts",
     "declarations", "field_policy", "run_at",
 })
+FACT_FIELDS = frozenset({"ownership", "ai_usage", "repost_source"})
+RIGHTS_DECLARATION_FIELDS = frozenset({"originality_rights", "repost_authorized"})
+DECLARATION_FIELDS = FACT_FIELDS | RIGHTS_DECLARATION_FIELDS
+FIELD_POLICY_KEYS = ("required", "optional", "allow_omit")
+FIELD_POLICY_FIELDS = frozenset(FIELD_POLICY_KEYS)
 
 # Intake ceilings are intentionally conservative offline gates, not claims
 # about current platform limits.
@@ -93,7 +98,7 @@ def normalize_manifest(raw: dict[str, Any], media_roots: tuple[Path, ...], expec
 
 def _validate_facts(manifest: dict[str, Any]) -> None:
     facts = manifest.get("facts")
-    if not isinstance(facts, dict) or set(facts) != {"ownership", "ai_usage", "repost_source"}:
+    if not isinstance(facts, dict) or set(facts) != FACT_FIELDS:
         raise TaskError("INVALID_INPUT", "Ownership, AI use, and repost source must be stated separately", field="facts")
     if not isinstance(facts["ownership"], str) or facts["ownership"] not in {"original", "repost"}:
         raise TaskError("INVALID_INPUT", "Ownership fact is invalid", field="facts.ownership")
@@ -109,13 +114,13 @@ def _validate_facts(manifest: dict[str, Any]) -> None:
     if not isinstance(declarations, dict):
         raise TaskError("INVALID_INPUT", "Declarations must be explicit", field="declarations")
     for field, value in declarations.items():
-        if field in {"originality_rights", "repost_authorized"}:
+        if field in RIGHTS_DECLARATION_FIELDS:
             if type(value) is not bool:
                 raise TaskError("INVALID_INPUT", "Rights declaration must be boolean", field=f"declarations.{field}")
             required_ownership = "original" if field == "originality_rights" else "repost"
             if value and facts["ownership"] != required_ownership:
                 raise TaskError("INVALID_INPUT", "Rights declaration contradicts ownership", field=f"declarations.{field}")
-        elif field not in facts:
+        elif field not in FACT_FIELDS:
             raise TaskError("INVALID_INPUT", "Unknown declaration", field=f"declarations.{field}")
         elif value != facts[field]:
             raise TaskError("INVALID_INPUT", "Declaration contradicts the stated fact", field=f"declarations.{field}")
@@ -124,13 +129,13 @@ def _validate_facts(manifest: dict[str, Any]) -> None:
 def _validate_field_policy(manifest: dict[str, Any]) -> None:
     policy = manifest.get("field_policy")
     fields = {"title", "body", "media", "tags", "cover", "collection"}
-    if not isinstance(policy, dict) or set(policy) != {"required", "optional", "allow_omit"}:
+    if not isinstance(policy, dict) or set(policy) != FIELD_POLICY_FIELDS:
         raise TaskError("INVALID_INPUT", "Field policy must be explicit", field="field_policy")
-    for name in ("required", "optional", "allow_omit"):
+    for name in FIELD_POLICY_KEYS:
         value = policy[name]
         if not isinstance(value, list) or any(not isinstance(item, str) for item in value) or len(value) != len(set(value)):
             raise TaskError("INVALID_INPUT", "Field policy list is invalid", field=f"field_policy.{name}")
-    required, optional, allow_omit = (set(policy[name]) for name in ("required", "optional", "allow_omit"))
+    required, optional, allow_omit = (set(policy[name]) for name in FIELD_POLICY_KEYS)
     if required | optional != fields or required & optional or not {"title", "body", "media"} <= required:
         raise TaskError("INVALID_INPUT", "Required and optional fields are inconsistent", field="field_policy")
     if not allow_omit <= optional:

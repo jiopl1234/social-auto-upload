@@ -84,6 +84,12 @@ async def _prepare(adapter: PreparationAdapter, context: ExecutionContext) -> di
     return metadata
 
 
+async def _preflight(context: ExecutionContext, job: dict,
+                     check: Callable[[dict], Awaitable[Any]] | None) -> None:
+    if check is not None:
+        await context.run_stage("preflight", lambda: check(job))
+
+
 async def _submit(adapter: DeliveryAdapter, context: ExecutionContext) -> TaskError | None:
     try:
         receipt = await context.run_stage("submit", lambda: adapter.submit(context))
@@ -136,6 +142,9 @@ async def _cleanup(adapter: PreparationAdapter, context: ExecutionContext, warni
         # for a new publisher while it may still reach a browser.
         context.resources_started()
         failure = failure or TaskError("RESOURCES_UNCONFIRMED", "An adapter operation may still be running")
+    for diagnostic in context.budget.cleanup_diagnostics:
+        if diagnostic not in warnings:
+            warnings.append(diagnostic)
     try:
         context.lease.assert_resources_closed()
     except TaskError as exc:
@@ -152,7 +161,7 @@ async def _cleanup(adapter: PreparationAdapter, context: ExecutionContext, warni
 
 async def run_once(
     store: Store, runtime_dir: Path, adapters: Mapping[str, PreparationAdapter], job_id: str | None = None,
-    *, preflight: Callable[[dict], Mapping[str, Any]] | None = None, max_attempts: int = 2,
+    *, preflight: Callable[[dict], Awaitable[Any]] | None = None, max_attempts: int = 2,
     limits: Mapping[str, float] | None = None, wall_clock: Callable[[], datetime] | None = None,
 ) -> dict | None:
     if type(max_attempts) is not int or not 1 <= max_attempts <= 5:
@@ -204,15 +213,13 @@ async def run_once(
                 try:
                     context.assert_owner()
                     if not recovering:
-                        if preflight is not None:
-                            preflight(job)
+                        await _preflight(context, job, preflight)
                         metadata = await _prepare(adapter, context)
                     if full_delivery and not recovering:
                         metadata, field_warnings = validate_prepared(job["manifest"], cast(dict, metadata))
                         warnings.extend(field_warnings)
                         job = store.mark_ready(job["job_id"], lease.token, cast(dict, metadata), warnings)
-                        if preflight is not None:
-                            preflight(job)
+                        await _preflight(context, job, preflight)
                         context.assert_owner()
                         if context.time_left("submit") <= 0:
                             raise TaskError("TIMEOUT", "Execution deadline expired before submission", field="submit")

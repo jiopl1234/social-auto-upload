@@ -116,9 +116,26 @@ def test_invalid_batch_shape_is_rejected_before_intake(tmp_path, change, field):
     assert invalid.value.field == field
     assert service.list_jobs() == []
     with sqlite3.connect(tmp_path / "jobs.sqlite3") as connection:
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'fanout_batches'"
-        ).fetchone() is None
+        assert connection.execute("SELECT COUNT(*) FROM fanout_batches").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("placement", ["common", "override"])
+def test_batch_publish_at_is_explicitly_unsupported_before_intake(tmp_path, placement):
+    service = make_service(tmp_path)
+    request = batch_request(tmp_path, key=f"publish-at-{placement}")
+    if placement == "common":
+        request["publish_at"] = "2030-01-01T00:15:00"
+    else:
+        request["targets"][1]["overrides"] = {"publish_at": "2030-01-01T00:15:00"}
+
+    with pytest.raises(TaskError) as unsupported:
+        service.enqueue_batch(request)
+
+    assert unsupported.value.code == "UNSUPPORTED"
+    assert unsupported.value.field == "publish_at"
+    assert service.list_jobs() == []
+    with sqlite3.connect(tmp_path / "jobs.sqlite3") as connection:
+        assert connection.execute("SELECT COUNT(*) FROM fanout_batches").fetchone()[0] == 0
 
 
 def test_invalid_target_schedule_is_visible_without_blocking_other_target(tmp_path):
@@ -473,3 +490,21 @@ def test_batch_cli_enqueues_and_queries_across_processes(tmp_path):
     conflicting, error = run_jobs(db, "enqueue-batch", "--manifest", manifest_path)
     assert conflicting.returncode == 4
     assert error["error"]["code"] == "CONFLICT"
+
+
+@pytest.mark.parametrize("placement", ["common", "override"])
+def test_batch_cli_publish_at_reports_unsupported(tmp_path, placement):
+    make_service(tmp_path)
+    request = batch_request(tmp_path, key=f"cli-publish-at-{placement}")
+    if placement == "common":
+        request["publish_at"] = "2030-01-01T00:15:00"
+    else:
+        request["targets"][0]["overrides"] = {"publish_at": "2030-01-01T00:15:00"}
+    manifest_path = tmp_path / "batch.json"
+    manifest_path.write_text(json.dumps(request), encoding="utf-8")
+
+    completed, error = run_jobs(tmp_path / "jobs.sqlite3", "enqueue-batch", "--manifest", manifest_path)
+
+    assert completed.returncode == 5
+    assert error["error"]["code"] == "UNSUPPORTED"
+    assert error["error"]["field"] == "publish_at"

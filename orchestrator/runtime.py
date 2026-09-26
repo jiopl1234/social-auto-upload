@@ -12,7 +12,7 @@ from orchestrator.errors import TaskError
 
 T = TypeVar("T")
 DEFAULT_LIMITS = {
-    "total": 900.0, "prepare": 720.0, "navigation": 60.0,
+    "total": 900.0, "preflight": 60.0, "prepare": 720.0, "navigation": 60.0,
     "upload": 300.0, "processing": 300.0, "metadata": 60.0,
     "submit": 30.0, "reconcile": 60.0, "session_save": 10.0, "cleanup": 10.0,
 }
@@ -40,6 +40,8 @@ class ExecutionBudget:
         self.pending: set[asyncio.Task] = set()
         self.spent: dict[str, float] = {}
         self.active: dict[str, list[float]] = {}
+        self.cancelling: set[asyncio.Task] = set()
+        self.cleanup_diagnostics: list[dict] = []
 
     def time_left(self, stage: str) -> float:
         if stage not in self.limits or stage == "total":
@@ -58,7 +60,22 @@ class ExecutionBudget:
         self.pending.discard(task)
         if not task.cancelled():
             # Retrieve late failures without exposing driver exception strings.
-            task.exception()
+            error = task.exception()
+            if task in self.cancelling and isinstance(error, TaskError) and error.code in {
+                "RESOURCES_UNCONFIRMED", "CLEANUP_FAILED",
+            }:
+                self.cleanup_diagnostics.append(error.as_dict())
+        self.cancelling.discard(task)
+
+    async def _cancel(self, task: asyncio.Task) -> None:
+        if task not in self.cancelling:
+            self.cancelling.add(task)
+            task.cancel()
+        # Give the owned operation a bounded slice to reap its resources (for
+        # example the read-only preflight child) before browser shutdown starts.
+        grace = max(0.0, min(1.0, self.limits["cleanup"] / 2, self.deadline - time.monotonic()))
+        if grace:
+            await asyncio.wait({task}, timeout=grace)
 
     async def run(self, stage: str, operation: Callable[[], Awaitable[T]]) -> T:
         remaining = self.time_left(stage)
@@ -72,11 +89,11 @@ class ExecutionBudget:
         try:
             done, _ = await asyncio.wait({task}, timeout=remaining)
             if not done:
-                task.cancel()
+                await self._cancel(task)
                 raise TaskError("TIMEOUT", "Execution stage exceeded its deadline", field=stage)
             return task.result()
         except asyncio.CancelledError:
-            task.cancel()
+            await self._cancel(task)
             raise
         finally:
             self.active[stage].remove(started)

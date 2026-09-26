@@ -9,14 +9,14 @@ import json
 from pathlib import Path
 import sqlite3
 from time import monotonic, sleep
-from typing import Callable, Iterator
+from typing import Any, Callable, Iterator
 from uuid import uuid4
 
 from .errors import TaskError
 from .scheduling import is_due
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -113,6 +113,9 @@ class Store:
                 connection.execute("ALTER TABLE attempts ADD COLUMN submission_started_at TEXT")
                 connection.execute("ALTER TABLE attempts ADD COLUMN receipt_id TEXT")
                 connection.execute("ALTER TABLE attempts ADD COLUMN submit_count INTEGER NOT NULL DEFAULT 0 CHECK (submit_count IN (0, 1))")
+                version = 2
+            if version == 2:
+                self._create_fanout_tables(connection)
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 return
 
@@ -180,7 +183,37 @@ class Store:
                     PRIMARY KEY (platform, account)
                 )"""
             )
+            self._create_fanout_tables(connection)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    @staticmethod
+    def _create_fanout_tables(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS fanout_batches (
+                batch_id TEXT PRIMARY KEY,
+                delivery_key TEXT NOT NULL UNIQUE,
+                request_digest TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS fanout_targets (
+                batch_id TEXT NOT NULL REFERENCES fanout_batches (batch_id),
+                target_index INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                account TEXT NOT NULL,
+                expected_digest TEXT,
+                normalized_json TEXT,
+                job_id TEXT REFERENCES jobs (job_id),
+                error_json TEXT,
+                PRIMARY KEY (batch_id, target_index),
+                UNIQUE (batch_id, platform, account)
+            )"""
+        )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(fanout_targets)")}
+        if "normalized_json" not in columns:
+            connection.execute("ALTER TABLE fanout_targets ADD COLUMN normalized_json TEXT")
 
     @staticmethod
     def _decode(value: str | None) -> object | None:
@@ -299,6 +332,143 @@ class Store:
                 "SELECT * FROM attempts WHERE job_id = ? ORDER BY started_at, attempt_id", (job_id,)
             ).fetchall()
             return [dict(row) for row in rows]
+
+    @staticmethod
+    def _matching_fanout_batch(connection: sqlite3.Connection, delivery_key: str,
+                               request_json: str, request_digest: str) -> str | None:
+        row = connection.execute(
+            "SELECT batch_id, request_digest, request_json FROM fanout_batches WHERE delivery_key = ?",
+            (delivery_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["request_digest"] != request_digest or row["request_json"] != request_json:
+            raise TaskError("CONFLICT", "Batch delivery key is already used for different content", field="delivery_key")
+        return row["batch_id"]
+
+    def find_fanout_batch(self, delivery_key: str, request_json: str, request_digest: str) -> str | None:
+        with self.transaction() as connection:
+            return self._matching_fanout_batch(connection, delivery_key, request_json, request_digest)
+
+    def register_fanout_batch(self, delivery_key: str, request_json: str, request_digest: str,
+                              prepared: list[dict[str, Any]]) -> str:
+        """Commit one batch intent and all target snapshots before any child enqueue."""
+        with self.transaction() as connection:
+            existing = self._matching_fanout_batch(connection, delivery_key, request_json, request_digest)
+            if existing is not None:
+                return existing
+            batch_id = uuid4().hex
+            connection.execute(
+                "INSERT INTO fanout_batches (batch_id, delivery_key, request_digest, request_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (batch_id, delivery_key, request_digest, request_json, self._utc_now()),
+            )
+            for index, target in enumerate(prepared):
+                snapshot, error = target.get("manifest"), target.get("error")
+                if (snapshot is None) == (error is None):
+                    raise TaskError("INVALID_INPUT", "Batch target requires a snapshot or input error")
+                normalized_json = _canonical_json(snapshot) if snapshot is not None else None
+                expected_digest = (sha256(normalized_json.encode("utf-8")).hexdigest()
+                                   if normalized_json is not None else None)
+                connection.execute(
+                    "INSERT INTO fanout_targets (batch_id, target_index, platform, account, "
+                    "expected_digest, normalized_json, error_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (batch_id, index, target["platform"], target["account"], expected_digest,
+                     normalized_json, _canonical_json(error) if error is not None else None),
+                )
+            return batch_id
+
+    def fanout_target(self, batch_id: str, index: int) -> dict[str, Any]:
+        with self.transaction() as connection:
+            row = connection.execute(
+                "SELECT job_id, error_json, expected_digest, normalized_json FROM fanout_targets "
+                "WHERE batch_id = ? AND target_index = ?", (batch_id, index),
+            ).fetchone()
+            if row is None:
+                raise TaskError("STORAGE_ERROR", "Batch target is missing")
+            return {
+                "job_id": row["job_id"], "error": self._decode(row["error_json"]),
+                "expected_digest": row["expected_digest"],
+                "manifest": self._decode(row["normalized_json"]),
+            }
+
+    def link_existing_fanout_child(self, batch_id: str, index: int) -> bool:
+        """Attach the unique matching job, including one enqueued before an interrupted receipt link."""
+        with self.transaction() as connection:
+            target = connection.execute(
+                """SELECT t.platform, t.account, t.expected_digest, t.normalized_json,
+                          t.job_id, t.error_json, b.delivery_key
+                   FROM fanout_targets t JOIN fanout_batches b ON b.batch_id = t.batch_id
+                   WHERE t.batch_id = ? AND t.target_index = ?""",
+                (batch_id, index),
+            ).fetchone()
+            if target is None:
+                raise TaskError("STORAGE_ERROR", "Batch target is missing")
+            if target["job_id"] is not None or target["error_json"] is not None:
+                return True
+            if not target["expected_digest"] or not target["normalized_json"]:
+                raise TaskError("STORAGE_ERROR", "Batch target has no durable normalized snapshot")
+            job = connection.execute(
+                "SELECT job_id, request_digest, manifest_json FROM jobs "
+                "WHERE platform = ? AND account = ? AND delivery_key = ?",
+                (target["platform"], target["account"], target["delivery_key"]),
+            ).fetchone()
+            if job is None:
+                return False
+            if (job["request_digest"] != target["expected_digest"]
+                    or job["manifest_json"] != target["normalized_json"]):
+                raise TaskError("CONFLICT", "Target delivery key is already used for different content", field="delivery_key")
+            connection.execute(
+                "UPDATE fanout_targets SET job_id = ? WHERE batch_id = ? AND target_index = ? "
+                "AND job_id IS NULL AND error_json IS NULL",
+                (job["job_id"], batch_id, index),
+            )
+            return True
+
+    def record_fanout_error(self, batch_id: str, index: int, error: dict) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "UPDATE fanout_targets SET error_json = ? WHERE batch_id = ? AND target_index = ? "
+                "AND job_id IS NULL AND error_json IS NULL",
+                (_canonical_json(error), batch_id, index),
+            )
+
+    def fanout_status_rows(self, batch_id: str) -> dict[str, Any]:
+        """Read the latest child jobs and account pauses in one database snapshot."""
+        with self.transaction() as connection:
+            batch = connection.execute(
+                "SELECT batch_id, delivery_key, request_digest FROM fanout_batches WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchone()
+            if batch is None:
+                raise TaskError("NOT_FOUND", f"Batch {batch_id} was not found")
+            rows = connection.execute(
+                "SELECT platform, account, job_id, error_json FROM fanout_targets "
+                "WHERE batch_id = ? ORDER BY target_index", (batch_id,),
+            ).fetchall()
+            targets = []
+            for row in rows:
+                job = None
+                account = None
+                if row["job_id"] is not None:
+                    job_row = connection.execute("SELECT * FROM jobs WHERE job_id = ?", (row["job_id"],)).fetchone()
+                    if job_row is None:
+                        raise TaskError("STORAGE_ERROR", "Batch target references a missing job")
+                    job = self._job_from_row(job_row)
+                    account = connection.execute(
+                        "SELECT status, pause_reason FROM accounts WHERE platform = ? AND account = ?",
+                        (row["platform"], row["account"]),
+                    ).fetchone()
+                targets.append({
+                    "platform": row["platform"], "account": row["account"], "job_id": row["job_id"],
+                    "error": self._decode(row["error_json"]), "job": job,
+                    "account_status": account["status"] if account is not None else None,
+                    "pause_reason": self._decode(account["pause_reason"]) if account is not None else None,
+                })
+            return {
+                "batch_id": batch["batch_id"], "delivery_key": batch["delivery_key"],
+                "request_digest": batch["request_digest"], "targets": targets,
+            }
 
     def runnable_jobs(self, max_attempts: int) -> list[dict]:
         with self.transaction() as connection:

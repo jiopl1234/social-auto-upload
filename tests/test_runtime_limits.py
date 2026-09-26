@@ -121,8 +121,10 @@ def test_total_deadline_reserves_cleanup_and_does_not_reset_between_stages(tmp_p
 
     class SlowStages(PublishingTarget):
         async def prepare(self, context):
-            await context.run_stage("upload", lambda: asyncio.sleep(0.12))
-            await context.run_stage("processing", lambda: asyncio.sleep(0.12))
+            # Leave room for real preflight process startup. Each individual
+            # operation fits; together they exceed the shared work deadline.
+            await context.run_stage("upload", lambda: asyncio.sleep(0.9))
+            await context.run_stage("processing", lambda: asyncio.sleep(0.9))
             return await super().prepare(context)
 
         async def close(self):
@@ -132,7 +134,7 @@ def test_total_deadline_reserves_cleanup_and_does_not_reset_between_stages(tmp_p
     target = SlowStages(service)
     result = asyncio.run(service.run_once(
         adapters={"douyin": target}, job_id=job["job_id"],
-        limits={"total": 0.3, "cleanup": 0.1},
+        limits={"total": 2.0, "cleanup": 0.3},
     ))
     assert result is not None and result["status"] == "FAILED_PRE_SUBMIT"
     assert result["error"]["code"] == "TIMEOUT"

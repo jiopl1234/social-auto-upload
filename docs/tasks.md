@@ -81,6 +81,8 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 
 当前 `run` 在待执行任务缺少适配器时返回明确的未接入错误，不调用旧上传流程。指定已结束的任务时返回其持久状态，不再次准备，也不宣称已发布。任务、尝试、事件和账号绑定使用真实数据库；创建任务与初始事件处于同一事务。升级发现较新数据库版本时拒绝操作，避免静默覆盖。
 
+当前数据库为 schema v3，支持从 v1/v2 在事务内升级并保留历史记录。分发批次表也属于这个版本。旧版 v2 程序会拒绝打开 v3 数据库，避免代码回退后忽略 run_at 而提前执行；对外 JSON 协议仍为 schema_version 1。
+
 ## 执行器与账号维护
 
 Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 提供 `run_once(adapters=..., job_id=..., max_attempts=2, limits=...)` 和串行 `run_pending(adapters=..., max_attempts=2, limits=...)`。完整适配器实现 `prepare(context)`、`submit(context)`、`reconcile(context)` 和 `close()`；准备返回实际元数据，提交最多调用一次，核对只读作品列表或详情。仅实现准备和清理的兼容适配器结束于 `READY`，该状态没有平台成功含义。
@@ -97,9 +99,11 @@ Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 
 
 ## 截止、取消和浏览器
 
-执行采用单调时钟，所有阶段共享总预算并预留清理时间。默认秒数：`total=900`、`prepare=720`、`navigation=60`、`upload=300`、`processing=300`、`metadata=60`、`submit=30`、`reconcile=60`、`session_save=10`、`cleanup=10`。同一阶段的多次操作累计扣减预算。`limits` 可覆盖这些键，值必须是有限正数且 `total > cleanup`；例如 `{ "total": 60, "upload": 30, "cleanup": 5 }`。
+执行采用单调时钟，所有阶段共享总预算并预留清理时间。默认秒数：`total=900`、`preflight=60`、`prepare=720`、`navigation=60`、`upload=300`、`processing=300`、`metadata=60`、`submit=30`、`reconcile=60`、`session_save=10`、`cleanup=10`。同一阶段的多次操作累计扣减预算。`limits` 可覆盖这些键，值必须是有限正数且 `total > cleanup`；例如 `{ "total": 60, "upload": 30, "cleanup": 5 }`。
 
 适配器通过 `context.run_stage(name, operation)` 执行可取消的异步操作。准备超时返回 `TIMEOUT` 和阶段名，提交后超时保留可能已提交的边界。取消发生在提交前且清理确认时返回 `CANCELLED / NOT_SUBMITTED`；提交后取消返回 `UNKNOWN_COMMIT / MAY_HAVE_SUBMITTED`，指定任务的后续执行只读核对。取消不会撤销远端作品。清理也有总截止，外部取消不会中断已经开始的有界清理；资源不能确认关闭时暂停账号并保留主要错误。
+
+执行中的两次预检都在只读 Python 子进程中校验绑定、受管会话及媒体版本，避免磁盘读取阻塞浏览器事件循环。超时或取消后先终止并核实该子进程；父进程异常退出时，子进程也通过进程身份监测退出。规范化清单的同步入口校验仍保持原有公共接口。
 
 `BrowserSession` 沿用固定版本 Patchright，创建资源后立即纳入关闭流程，独立尝试 page、context、browser 和 driver 的关闭。会话保存先验证临时文件再原子替换。运行事件关联 driver/browser 版本、公开启动选项和实际执行预算，不记录会话内容或可执行文件路径。适配器必须采用异步、可取消的驱动操作；任意阻塞 Python 扩展或自行忽略取消的第三方插件不属于已验证执行路径，无法证明停止时账号仍保持资源阻断。
 

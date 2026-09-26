@@ -74,12 +74,23 @@ class TaskService:
         binding = get_binding(self.store, self.runtime_dir, job["platform"], job["account"])
         return preflight_manifest(manifest, self.media_roots, binding["expected_id"])
 
+    async def preflight_async(self, job: dict) -> None:
+        from orchestrator.preflight_process import verify_job
+        from orchestrator.scheduling import is_due
+
+        manifest = job["manifest"]
+        if not is_due(manifest, self.clock()):
+            raise TaskError("NOT_DUE", "Scheduled local start time has not arrived", field="run_at")
+        await verify_job(job, self.store.path, self.runtime_dir, self.media_roots)
+        if not is_due(manifest, self.clock()):
+            raise TaskError("NOT_DUE", "Scheduled local start time has not arrived", field="run_at")
+
     async def run_once(self, *, adapters, job_id: str | None = None, max_attempts: int = 2,
                        limits: dict[str, float] | None = None) -> dict | None:
         from orchestrator.worker import run_once
 
         return await run_once(self.store, self.runtime_dir, adapters, job_id,
-                              preflight=self.preflight, max_attempts=max_attempts,
+                              preflight=self.preflight_async, max_attempts=max_attempts,
                               limits=limits, wall_clock=self.clock)
 
     async def run_pending(self, *, adapters, max_attempts: int = 2,
