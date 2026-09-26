@@ -8,7 +8,8 @@ import os
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from importlib import import_module
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,7 +18,7 @@ from uuid import uuid4
 import pytest
 
 import sau_cli
-from orchestrator.errors import TaskError
+from orchestrator.errors import ResourceCleanupError, TaskError
 from orchestrator.ownership import AccountLease
 
 
@@ -288,3 +289,99 @@ def test_douyin_video_close_failure_is_reported_after_both_closes(tmp_path):
         asyncio.run(video.upload(playwright))
     context.close.assert_awaited_once()
     browser.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("platform", ("xiaohongshu", "tencent"))
+@pytest.mark.parametrize(
+    "inner_close_fails,outer_close_fails",
+    ((False, False), (True, False), (True, True), (False, True)),
+)
+def test_nested_login_cleanup_controls_public_lease(
+    tmp_path, monkeypatch, platform, inner_close_fails, outer_close_fails
+):
+    """A nested cookie check must never turn an unknown browser close into a safe login result."""
+    runtime = tmp_path / "runtime"
+    monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
+    (tmp_path / "legacy").mkdir()
+    monkeypatch.setattr(sau_cli, "resolve_runtime_home", lambda: tmp_path / "legacy")
+    module = import_module(f"uploader.{platform}_uploader.main")
+    login = sau_cli.login_xiaohongshu_account if platform == "xiaohongshu" else sau_cli.login_tencent_account
+
+    outer_page = MagicMock()
+    outer_page.goto = AsyncMock()
+    outer_page.url = "https://example.invalid/creator"
+    outer_context = MagicMock()
+    outer_context.new_page = AsyncMock(return_value=outer_page)
+
+    async def save_state(*, path):
+        Path(path).write_text("session", encoding="utf-8")
+
+    outer_context.storage_state = AsyncMock(side_effect=save_state)
+    outer_context.close = AsyncMock(
+        side_effect=OSError("outer context close failed") if outer_close_fails else None
+    )
+    outer_browser = MagicMock()
+    outer_browser.new_context = AsyncMock(return_value=outer_context)
+    outer_browser.close = AsyncMock()
+
+    inner_context = MagicMock()
+    inner_context.new_page = AsyncMock(side_effect=RuntimeError("controlled cookie check failure"))
+    inner_browser = MagicMock()
+    inner_browser.new_context = AsyncMock(return_value=inner_context)
+    inner_browser.close = AsyncMock(
+        side_effect=OSError("nested browser close failed; cookie=raw-secret") if inner_close_fails else None
+    )
+
+    playwright = MagicMock()
+    playwright.chromium.launch = AsyncMock(side_effect=(outer_browser, inner_browser))
+
+    class PlaywrightContext:
+        async def __aenter__(self):
+            return playwright
+
+        async def __aexit__(self, *_args):
+            return False
+
+    with ExitStack() as stack:
+        stack.enter_context(patch.object(module, "async_playwright", side_effect=PlaywrightContext))
+        stack.enter_context(patch.object(module, "set_init_script", new=AsyncMock(side_effect=lambda context: context)))
+        stack.enter_context(patch.object(module.asyncio, "sleep", new=AsyncMock()))
+        if platform == "xiaohongshu":
+            stack.enter_context(patch.object(module, "_save_xhs_qrcode", new=AsyncMock(return_value={"image_path": str(tmp_path / "qr.png")})))
+            stack.enter_context(patch.object(module, "_is_xhs_login_completed", new=AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(module, "remove_qrcode_file", return_value=False))
+        else:
+            stack.enter_context(patch.object(module, "_save_tencent_qrcode", new=AsyncMock(return_value={"image_path": str(tmp_path / "qr.png")})))
+            stack.enter_context(patch.object(module, "_wait_for_tencent_login", new=AsyncMock(return_value={"success": True, "message": "complete"})))
+            stack.enter_context(patch.object(module, "_get_qrcode_utils", return_value={"remove_qrcode_file": lambda _path: False}))
+
+        if inner_close_fails or outer_close_fails:
+            with pytest.raises(TaskError) as caught:
+                asyncio.run(login("creator"))
+            assert caught.value.code == "RESOURCES_UNCONFIRMED"
+            assert isinstance(caught.value, ResourceCleanupError)
+            assert caught.value.stage == ("COOKIE_CHECK" if inner_close_fails else "LOGIN")
+            assert "raw-secret" not in str(caught.value)
+        else:
+            result = asyncio.run(login("creator"))
+            assert result["success"] is False
+            assert result["status"] == "cookie_invalid"
+
+    outer_context.close.assert_awaited_once()
+    outer_browser.close.assert_awaited_once()
+    inner_browser.close.assert_awaited_once()
+
+    lease = AccountLease(runtime, platform, "creator")
+    marker = json.loads(lease.path.read_text(encoding="utf-8"))
+    if inner_close_fails or outer_close_fails:
+        assert marker["active"] is True
+        assert marker["resources_started"] is True
+        with pytest.raises(TaskError) as blocked:
+            asyncio.run(login("different account"))
+        assert blocked.value.code == "ACCOUNT_BUSY"
+        assert not (tmp_path / "legacy" / "cookies" / f"{platform}_different account.json").exists()
+    else:
+        assert marker["active"] is False
+        assert marker["resources_started"] is False
+        with AccountLease(runtime, platform, "another alias"):
+            pass

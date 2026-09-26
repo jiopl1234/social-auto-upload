@@ -15,6 +15,7 @@ from patchright.async_api import Playwright
 from patchright.async_api import async_playwright
 
 from conf import BASE_DIR, DEBUG_MODE, LOCAL_CHROME_HEADLESS, LOCAL_CHROME_PATH
+from orchestrator.errors import ResourceCleanupError
 from uploader.base_video import BaseVideoUploader
 from utils.base_social_media import set_init_script
 from utils.log import tencent_logger
@@ -142,7 +143,10 @@ async def cookie_auth(account_file):
             tencent_logger.warning(_msg("😵", f"cookie 校验时出错，按失效处理: {exc}"))
             return False
         finally:
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception:
+                raise ResourceCleanupError("COOKIE_CHECK") from None
 
 
 async def _extract_tencent_qrcode_src(page: Page) -> str:
@@ -396,6 +400,7 @@ async def tencent_cookie_gen(
         context = await browser.new_context()
         qrcode_path = None
         result = _build_login_result(False, "failed", "视频号登录失败", account_file)
+        primary_error: BaseException | None = None
         try:
             page = await context.new_page()
             await page.goto(TENCENT_LOGIN_URL)
@@ -420,7 +425,13 @@ async def tencent_cookie_gen(
             if result["success"]:
                 await asyncio.sleep(2)
                 await context.storage_state(path=account_file)
-                if not await cookie_auth(account_file):
+                try:
+                    cookie_valid = await cookie_auth(account_file)
+                except ResourceCleanupError:
+                    raise
+                except Exception:
+                    raise ResourceCleanupError("COOKIE_CHECK") from None
+                if not cookie_valid:
                     result = _build_login_result(
                         False,
                         "cookie_invalid",
@@ -430,6 +441,9 @@ async def tencent_cookie_gen(
                         page.url,
                     )
             return result
+        except ResourceCleanupError as exc:
+            primary_error = exc
+            raise
         except Exception as exc:
             result = _build_login_result(
                 False,
@@ -439,14 +453,29 @@ async def tencent_cookie_gen(
                 current_url=page.url if "page" in locals() else "",
             )
             return result
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
-            qrcode_utils = _get_qrcode_utils()
-            if qrcode_utils["remove_qrcode_file"](qrcode_path):
-                tencent_logger.info(_msg("🧹", f"临时二维码文件已清理: {qrcode_path}"))
-            if not result["success"]:
-                tencent_logger.error(_msg("😢", f"登录失败: {result['message']}"))
-            await context.close()
-            await browser.close()
+            cleanup_error: BaseException | None = None
+            try:
+                qrcode_utils = _get_qrcode_utils()
+                if qrcode_utils["remove_qrcode_file"](qrcode_path):
+                    tencent_logger.info(_msg("🧹", f"临时二维码文件已清理: {qrcode_path}"))
+                if not result["success"]:
+                    tencent_logger.error(_msg("😢", f"登录失败: {result['message']}"))
+            except BaseException as exc:
+                cleanup_error = exc
+            for resource in (context, browser):
+                try:
+                    await resource.close()
+                except BaseException as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+            if cleanup_error is not None and primary_error is None:
+                if not isinstance(cleanup_error, Exception):
+                    raise cleanup_error
+                raise ResourceCleanupError("LOGIN") from None
 
 
 async def tencent_setup(
