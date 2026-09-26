@@ -112,15 +112,15 @@ def test_public_maintenance_and_upload_entries_obey_external_process_lock(
 
     if platform == "douyin":
         video = lambda: sau_cli.upload_video(sau_cli.DouyinVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
-        uploads = (lambda: sau_cli.upload_note(sau_cli.DouyinNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),)
+        note = lambda: sau_cli.upload_note(sau_cli.DouyinNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0))
     elif platform == "xiaohongshu":
         video = lambda: sau_cli.upload_xiaohongshu_video(sau_cli.XiaohongshuVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
-        uploads = (lambda: sau_cli.upload_xiaohongshu_note(sau_cli.XiaohongshuNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0)),)
+        note = lambda: sau_cli.upload_xiaohongshu_note(sau_cli.XiaohongshuNoteUploadRequest("creator", [Path("unused.png")], "title", "body", [], 0))
     else:
         video = lambda: sau_cli.upload_tencent_video(sau_cli.TencentVideoUploadRequest("creator", Path("unused.mp4"), "title", "body", [], 0))
-        uploads = ()
+        note = None
 
-    operations = (lambda: login("creator"), lambda: check("creator"), *uploads)
+    operations = (lambda: login("creator"), lambda: check("creator"))
     with external_process_lock(lease.lock.path):
         for operation in operations:
             with pytest.raises(TaskError) as caught:
@@ -129,6 +129,10 @@ def test_public_maintenance_and_upload_entries_obey_external_process_lock(
         with pytest.raises(TaskError) as caught:
             asyncio.run(video())
         assert caught.value.code == "UNSUPPORTED"
+        if note is not None:
+            with pytest.raises(TaskError) as caught:
+                asyncio.run(note())
+            assert caught.value.code == "UNSUPPORTED"
 
 
 @pytest.mark.parametrize(

@@ -3,6 +3,8 @@
 These locate controls only. No stable-identity, processed-asset or work-detail
 mapping has been verified against a live account, so default ports stay gated.
 """
+from dataclasses import replace
+
 from orchestrator.platforms.dom import DomPagePort, EditorSelectors, PageEvidence
 
 
@@ -25,6 +27,14 @@ EDIT_URLS = {
     "xiaohongshu": "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video",
     "tencent": "https://channels.weixin.qq.com/platform/post/create",
 }
+NOTE_EDITORS = {
+    "douyin": replace(EDITORS["douyin"], upload="div[class^='container'] input[accept*='image']"),
+    "xiaohongshu": replace(EDITORS["xiaohongshu"], upload='input[type="file"][accept*="image"]'),
+}
+NOTE_EDIT_URLS = {
+    "douyin": EDIT_URLS["douyin"],
+    "xiaohongshu": "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=image",
+}
 WORK_URLS = {
     "douyin": "https://creator.douyin.com/creator-micro/content/manage",
     "xiaohongshu": "https://creator.xiaohongshu.com/new/note-manager",
@@ -34,7 +44,8 @@ WORK_URLS = {
 
 def create_port(platform: str, *, evidence: PageEvidence | None = None,
                 selectors: EditorSelectors | None = None, edit_url: str | None = None,
-                works_url: str | None = None) -> DomPagePort:
+                works_url: str | None = None, note_selectors: EditorSelectors | None = None) -> DomPagePort:
     return DomPagePort(platform, selectors or EDITORS[platform],
                        edit_url=edit_url or EDIT_URLS[platform], works_url=works_url or WORK_URLS[platform],
-                       evidence=evidence)
+                       evidence=evidence, note_selectors=note_selectors or NOTE_EDITORS.get(platform),
+                       note_edit_url=edit_url or NOTE_EDIT_URLS.get(platform))

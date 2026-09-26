@@ -19,7 +19,9 @@ class CreatorSite:
         self.submissions: list[dict] = []
         self.works: list[dict] = []
         self.queries = 0
+        self.query_kinds: list[str] = []
         self.hide_works = False
+        self.response_gate = threading.Event()
         site = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -32,12 +34,17 @@ class CreatorSite:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
-                self.wfile.write(payload)
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
 
             def do_GET(self):
                 if urlparse(self.path).path == "/works":
                     site.queries += 1
-                    return self.send_json([] if site.hide_works else site.works)
+                    kind = parse_qs(urlparse(self.path).query).get("kind", [""])[0]
+                    site.query_kinds.append(kind)
+                    return self.send_json([] if site.hide_works else [work for work in site.works if work["content_type"] == kind])
                 query = parse_qs(urlparse(self.path).query)
                 config = {"platform": site.platform, "mode": site.mode,
                           "kind": query.get("kind", ["video"])[0],
@@ -69,6 +76,8 @@ class CreatorSite:
                     self.close_connection = True
                     self.connection.close()
                     return
+                if site.mode == "delayed-response":
+                    site.response_gate.wait(timeout=5)
                 self.send_json({"content_id": work["content_id"]})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -80,6 +89,7 @@ class CreatorSite:
         return self
 
     def __exit__(self, *args):
+        self.response_gate.set()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
@@ -116,10 +126,11 @@ class FixtureEvidence:
         return {"content_id": content_id} if content_id else None
 
 
-def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None = None):
+def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None = None,
+                    cleanup_error: bool = False):
     import pytest
     from orchestrator.platforms.base import BrowserDeliveryAdapter
-    from orchestrator.platforms.profiles import EDITORS, create_port
+    from orchestrator.platforms.profiles import EDITORS, NOTE_EDITORS, create_port
 
     executable = _installed_chromium_executable()
     if executable is None:
@@ -130,6 +141,15 @@ def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None
             if mutate_after_save is not None:
                 assert self.page is not None
                 await self.page.evaluate(mutate_after_save)
+
+        async def close(self):
+            await super().close()
+            if cleanup_error:
+                from orchestrator.errors import TaskError
+
+                failure = TaskError("CLEANUP_FAILED", "Driver shutdown could not be confirmed")
+                self.cleanup_warnings.append(failure.as_dict())
+                raise failure
     selectors = replace(EDITORS[site.platform],
         tag_search="#tag-search", tag_candidates="#topics button", selected_tags="#tags > span",
         cover_input="#cover", collection="#collection",
@@ -140,7 +160,9 @@ def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None
     return BrowserDeliveryAdapter(
         service.runtime_dir,
         lambda: create_port(site.platform, selectors=selectors, edit_url=site.url, works_url=site.url,
-                            evidence=FixtureEvidence()),
+                            evidence=FixtureEvidence(),
+                            note_selectors=(replace(selectors, upload=NOTE_EDITORS[site.platform].upload)
+                                            if site.platform in NOTE_EDITORS else None)),
         session_factory=lambda context: Session(context, launch_options={
             "headless": True, "executable_path": str(executable),
         }),

@@ -666,81 +666,19 @@ class XiaoHongShuNote(XiaoHongShuBaseUploader):
         self.image_paths = normalized_image_paths
 
     async def upload_note_content(self, page: Page) -> None:
-        xiaohongshu_logger.info(_msg("🏃", f"小人开始搬运图文，共 {len(self.image_paths)} 张图片"))
-        xiaohongshu_logger.info(_msg("🧭", "小人正在赶往图文发布页"))
-        publish_url = _build_xhs_creator_url(
-            "/publish/publish?from=homepage&target=image"
-        )
-        await page.goto(publish_url)
-        await page.wait_for_url(publish_url)
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        upload_input = page.locator('input[type="file"][accept*="image"]').first
-        if not await upload_input.count():
-            upload_input = page.locator("div[class^='upload-content'] input[class='upload-input']").first
-
-        await upload_input.wait_for(state="attached", timeout=30000)
-        xiaohongshu_logger.info(_msg("📤", "小人正在上传图片"))
-        await upload_input.set_input_files(self.image_paths)
-
-        while True:
-            try:
-                title_container = page.locator('input[placeholder*="填写标题"]').first
-                await title_container.wait_for(state="visible", timeout=3000)
-                xiaohongshu_logger.success(_msg("🥳", "图文素材已经传完，可以开始填写内容了"))
-                break
-            except Exception:
-                xiaohongshu_logger.debug(_msg("🧍", "图文素材还在上传，小人继续等一会"))
-                await asyncio.sleep(1)
-
-        xiaohongshu_logger.info(_msg("✍️", "小人开始填标题、描述和话题"))
-        await self.fill_meta(page)
-
-        await self.check_original_declaration(page)
-
-        if self.publish_strategy == XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED and self.publish_date != 0:
-            await self.set_schedule_time_xiaohongshu(page, self.publish_date)
-
-        while True:
-            try:
-                if self.publish_strategy == XIAOHONGSHU_PUBLISH_STRATEGY_SCHEDULED:
-                    await page.locator('button:has-text("定时发布")').click()
-                else:
-                    await page.locator('button:has-text("发布")').click()
-                await page.wait_for_url(
-                    XHS_PUBLISH_SUCCESS_URL_PATTERN,
-                    timeout=3000
-                )
-                xiaohongshu_logger.success(_msg("🥳", "图文发布成功，小人开心收工"))
-                break
-            except Exception:
-                xiaohongshu_logger.info(_msg("🏃", "小人正在冲刺发布图文"))
-                if self.debug:
-                    await page.screenshot(full_page=True)
-                await asyncio.sleep(0.5)
+        require_task_delivery()
 
     async def upload(self, playwright: Playwright) -> None:
-        xiaohongshu_logger.info(_msg("🧍", "小人先检查 cookie、图片和发布时间"))
-        await self.validate_upload_args()
-        xiaohongshu_logger.info(_msg("🥳", "图文上传前检查通过"))
-        browser = await playwright.chromium.launch(headless=self.headless, channel="chromium")
-        context = await browser.new_context(
-            permissions=["geolocation"],
-            storage_state=self.account_file,
-        )
-        context = await set_init_script(context)
+        from orchestrator.platforms.legacy import require_task_delivery
 
-        try:
-            page = await context.new_page()
-            await self.upload_note_content(page)
-            await context.storage_state(path=self.account_file)
-            xiaohongshu_logger.success(_msg("🥳", "cookie 更新完毕"))
-        finally:
-            await context.close()
-            await browser.close()
+        require_task_delivery()
 
     async def xiaohongshu_upload_note(self):
-        async with async_playwright() as playwright:
-            await self.upload(playwright)
+        from orchestrator.platforms.legacy import require_task_delivery
+
+        require_task_delivery()
 
     async def main(self):
         await self.xiaohongshu_upload_note()

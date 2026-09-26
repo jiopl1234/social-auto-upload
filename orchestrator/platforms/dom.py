@@ -38,11 +38,13 @@ class EditorSelectors:
 
 class DomPagePort:
     capability_version = "1.0.0"
-    content_types = frozenset({"video"})
-
     def __init__(self, platform: str, selectors: EditorSelectors, *, edit_url: str, works_url: str,
-                 evidence: PageEvidence | None = None):
+                 evidence: PageEvidence | None = None, note_selectors: EditorSelectors | None = None,
+                 note_edit_url: str | None = None):
         self.platform, self.selectors = platform, selectors
+        self.video_selectors, self.note_selectors = selectors, note_selectors
+        self.content_types = frozenset({"video", "note"} if note_selectors is not None else {"video"})
+        self.note_edit_url = note_edit_url
         self.edit_url, self.works_url, self.evidence = edit_url, works_url, evidence
         self.verification_scope = evidence.verification_scope if evidence is not None else "unverified"
         self.submitted = False
@@ -54,7 +56,15 @@ class DomPagePort:
         return self.evidence
 
     async def navigate(self, page: Any, content_type: str, *, readonly: bool) -> None:
-        url = self.works_url if readonly else self.edit_url
+        if content_type not in self.content_types:
+            raise TaskError("UNSUPPORTED", "Content path is not supported", field="content_type")
+        if content_type == "note":
+            assert self.note_selectors is not None
+            self.selectors = self.note_selectors
+        else:
+            self.selectors = self.video_selectors
+        editor_url = (self.note_edit_url or self.edit_url) if content_type == "note" else self.edit_url
+        url = self.works_url if readonly else editor_url
         if self.verification_scope == "local_fixture":
             url += ("&" if "?" in url else "?") + urlencode({"kind": content_type, "view": "works" if readonly else "editor"})
         await page.goto(url, wait_until="domcontentloaded", timeout=0)

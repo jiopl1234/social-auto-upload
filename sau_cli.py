@@ -434,6 +434,7 @@ async def _upload_video_with_lease(request: DouyinVideoUploadRequest, lease: Acc
 
 
 async def upload_note(request: DouyinNoteUploadRequest) -> Path:
+    require_task_delivery()
     with AccountLease(default_runtime_dir(), "douyin", request.account_name) as lease:
         return await _upload_note_with_lease(request, lease)
 
@@ -549,6 +550,7 @@ async def _upload_xiaohongshu_video_with_lease(request: XiaohongshuVideoUploadRe
 
 
 async def upload_xiaohongshu_note(request: XiaohongshuNoteUploadRequest) -> Path:
+    require_task_delivery()
     with AccountLease(default_runtime_dir(), "xiaohongshu", request.account_name) as lease:
         return await _upload_xiaohongshu_note_with_lease(request, lease)
 
