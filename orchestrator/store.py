@@ -511,7 +511,10 @@ class Store:
             )
             connection.execute("UPDATE attempts SET status = ?, finished_at = ? WHERE attempt_id = ?", (status, now, job["attempt_id"]))
             connection.execute("INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, 'reconcile', ?, ?)",
-                               (job_id, job["attempt_id"], status, now, _canonical_json({"platform_result": work["platform_result"] if work else None})))
+                               (job_id, job["attempt_id"], status, now, _canonical_json({
+                                   "platform_result": work["platform_result"] if work else None,
+                                   "error": error, "warnings": warnings or [],
+                               })))
             if pause_reason is not None:
                 self._pause_account(connection, job["platform"], job["account"], pause_reason)
             return self._job_from_row(self._job_row(connection, job_id))

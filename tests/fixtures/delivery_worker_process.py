@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from orchestrator.errors import TaskError
 from orchestrator.locking import process_identity
 from orchestrator.service import TaskService
+from tests.task_fixtures import readback_metadata
 
 
 TIMEOUT = 15.0
@@ -74,7 +75,7 @@ class LocalDeliveryTarget:
         })
         await self.checkpoint("prepare", context)
         context.assert_owner()
-        return {"title": context.manifest["title"], "body": context.manifest["body"]}
+        return readback_metadata(context.manifest)
 
     async def submit(self, context) -> dict:
         context.assert_owner()
@@ -90,7 +91,7 @@ class LocalDeliveryTarget:
             "content_type": context.manifest["content_type"],
             "platform_result": "PUBLISHED",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": {"title": context.manifest["title"], "body": context.manifest["body"]},
+            "metadata": readback_metadata(context.manifest),
             "media_sha256": [asset["sha256"] for asset in context.manifest["media"]],
             "source": "work_detail",
         }

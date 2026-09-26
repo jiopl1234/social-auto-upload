@@ -16,7 +16,7 @@ import pytest
 from orchestrator.errors import TaskError
 from orchestrator.service import TaskService
 
-from tests.task_fixtures import IMAGE_BYTES, VIDEO_BYTES, make_manifest, make_service
+from tests.task_fixtures import IMAGE_BYTES, VIDEO_BYTES, make_manifest, make_service, readback_metadata
 
 
 class RecordingTarget:
@@ -26,7 +26,7 @@ class RecordingTarget:
 
     async def prepare(self, _context):
         self.prepared += 1
-        return {"title": "prepared"}
+        return readback_metadata(_context.manifest)
 
     async def submit(self, _context):
         self.submitted += 1
@@ -112,6 +112,56 @@ def test_declaration_cannot_contradict_a_separate_ai_fact(tmp_path):
 
     assert caught.value.code == "INVALID_INPUT"
     assert caught.value.field == "declarations.ai_usage"
+    assert service.list_jobs() == []
+
+
+def test_explicit_originality_rights_survive_enqueue_without_changing_ai_fact(tmp_path):
+    service = make_service(tmp_path)
+    manifest = make_manifest(
+        tmp_path, facts={"ownership": "original", "ai_usage": "generated", "repost_source": None},
+        declarations={"originality_rights": True},
+    )
+
+    job = service.enqueue(manifest)
+
+    assert job["manifest"]["facts"]["ai_usage"] == "generated"
+    assert job["manifest"]["declarations"] == {"originality_rights": True}
+    assert service.status(job["job_id"])["manifest"]["declarations"] == {"originality_rights": True}
+
+
+def test_absent_rights_are_not_invented_at_enqueue(tmp_path):
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+
+    assert job["manifest"]["declarations"] == {}
+
+
+def test_explicit_repost_authorization_keeps_source_fact_separate(tmp_path):
+    service = make_service(tmp_path)
+    facts = {"ownership": "repost", "ai_usage": "assisted",
+             "repost_source": "https://example.test/original-work"}
+
+    job = service.enqueue(make_manifest(tmp_path, facts=facts,
+                                        declarations={"repost_authorized": True}))
+
+    assert job["manifest"]["facts"] == facts
+    assert job["manifest"]["declarations"] == {"repost_authorized": True}
+
+
+@pytest.mark.parametrize("ownership,declaration", [
+    ("original", {"repost_authorized": True}),
+    ("repost", {"originality_rights": True}),
+])
+def test_rights_claim_must_fit_stated_ownership(tmp_path, ownership, declaration):
+    service = make_service(tmp_path)
+    facts = {"ownership": ownership, "ai_usage": "none",
+             "repost_source": "https://example.test/source" if ownership == "repost" else None}
+
+    with pytest.raises(TaskError) as caught:
+        service.enqueue(make_manifest(tmp_path, facts=facts, declarations=declaration))
+
+    assert caught.value.code == "INVALID_INPUT"
+    assert caught.value.field == f"declarations.{next(iter(declaration))}"
     assert service.list_jobs() == []
 
 
@@ -240,7 +290,7 @@ def test_media_changed_during_preparation_is_fenced_before_submit(tmp_path):
         async def prepare(self, context):
             self.prepared += 1
             Path(manifest["media"][0]).write_bytes(VIDEO_BYTES + b"late change")
-            return {"title": context.manifest["title"]}
+            return readback_metadata(context.manifest)
 
     target = ReplaceDuringPreparation()
     result = asyncio.run(service.run_once(adapters={"douyin": target}, job_id=job["job_id"]))

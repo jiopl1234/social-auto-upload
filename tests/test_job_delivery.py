@@ -7,7 +7,7 @@ import pytest
 
 from orchestrator.errors import TaskError
 from orchestrator.service import TaskService
-from tests.task_fixtures import make_manifest, make_service
+from tests.task_fixtures import make_manifest, make_service, readback_metadata
 
 
 def make_delivery(tmp_path):
@@ -26,11 +26,13 @@ class PublishingTarget:
         self.preparations = []
         self.closed = 0
         self.lookups = 0
+        self.applied = {}
 
     async def prepare(self, context):
         context.assert_owner()
         self.preparations.append(context.job_id)
-        return {"title": context.manifest["title"], "body": context.manifest["body"]}
+        self.applied = readback_metadata(context.manifest)
+        return self.applied
 
     async def submit(self, context):
         # Observe the durable boundary before the external side effect.
@@ -43,7 +45,7 @@ class PublishingTarget:
             "account_id": context.manifest["expected_account_id"],
             "content_type": context.manifest["content_type"], "platform_result": self.platform_result,
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": {"title": context.manifest["title"], "body": context.manifest["body"]},
+            "metadata": dict(self.applied),
             "media_sha256": [asset["sha256"] for asset in context.manifest["media"]],
             "source": "work_detail",
         })

@@ -45,6 +45,8 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 
 本地校验只接受列出的保守格式与能力范围，不证明平台当前规则或文件转码一定通过。`publish_at` 首版不支持；`run_at` 将在 12 号票接入，目前显式拒绝。旧任务的查询数据继续保留，旧版未带素材摘要和事实的清单不能直接用新接口执行。
 
+平台权益可通过 `declarations.originality_rights` 与 `declarations.repost_authorized` 的显式布尔值表达；省略时不添加默认值。申请原创权益要求内容归属为原创，声明转载获授权要求内容归属为转载；两者都不会推导或改写 AI 使用事实。具体控件是否支持及权益资格仍需平台适配器核查。
+
 平台、账号、`delivery_key` 共同标识一次交付意图。同一个键提交相同清单返回原任务；只改变 JSON 对象字段顺序不创建新任务。同键内容不同返回 `CONFLICT`，不会覆盖原清单。素材摘要用于内容一致性核查，不替代交付键。
 
 ## 查询与结果
@@ -82,6 +84,8 @@ sau jobs --db C:/Users/Chinese/.sau/tasks.sqlite3 --json accounts
 ## 执行器与账号维护
 
 Python 公共接口 `TaskService(database, runtime_dir=..., media_roots=[...])` 提供 `run_once(adapters=..., job_id=..., max_attempts=2)` 和串行 `run_pending(adapters=..., max_attempts=2)`。完整适配器实现 `prepare(context)`、`submit(context)`、`reconcile(context)` 和 `close()`；准备返回实际元数据，提交最多调用一次，核对只读作品列表或详情。仅实现准备和清理的兼容适配器结束于 `READY`，该状态没有平台成功含义。
+
+完整适配器的 `prepare` 必须报告实际读回的 `title`、`body`、`tags`、`media`、`cover`、`collection`、`declarations`。`media` 是有序的 `{kind, sha256}` 列表，摘要关联已确认上传的本地素材；`cover` 为同结构的对象或 null。编排层在 SUBMITTING 前将这些值与不可变清单比较。必需内容或声明不符会返回字段错误并阻止提交；只有明确允许遗漏的可选字段可为空，并保存 `FIELD_OMITTED` 警告。该契约要求适配器提供真实页面证据，不能通过复制请求伪造读回。素材摘要的客户端记录不代表平台返回了同一摘要。
 
 `max_attempts` 限制同一任务的尝试总数，允许 1–5，默认 2。只有确定未越过提交边界的 `TRANSIENT_PRE_SUBMIT` 才可重试；认证、身份、声明、UI 变化和审核拒绝不进入重试循环。即使适配器在提交后错误地返回临时错误类别，持久边界也会禁止重发。重启后尚在 SUBMITTING 的任务自动进入只读恢复；UNKNOWN_COMMIT 不进入自动待发布队列，可用指定 `job_id` 的执行调用再次只读核对。核对不依赖原始本地素材仍然存在。
 

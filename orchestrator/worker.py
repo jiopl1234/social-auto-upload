@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping, Protocol, cast
 from orchestrator.delivery import match_work
 from orchestrator.errors import TaskError
 from orchestrator.manifest import freeze_manifest
+from orchestrator.metadata import validate_prepared
 from orchestrator.ownership import AccountLease
 from orchestrator.store import Store
 
@@ -84,6 +85,11 @@ async def run_once(
                     continue
                 context = ExecutionContext(job["job_id"], job["attempt_id"], freeze_manifest(job["manifest"]), store, lease)
                 error, metadata, warnings = None, None, []
+                if recovering:
+                    # Content omissions remain true for this same remote work.
+                    # Earlier transient/authentication diagnostics do not pause
+                    # a successfully repaired session again.
+                    warnings = [item for item in job["warnings"] if item.get("code") == "FIELD_OMITTED"]
                 submitted, work = recovering, None
                 try:
                     context.assert_owner()
@@ -96,6 +102,8 @@ async def run_once(
                         metadata = json.loads(json.dumps(prepared, ensure_ascii=False, allow_nan=False))
                         context.assert_owner()
                     if full_delivery and not recovering:
+                        metadata, field_warnings = validate_prepared(context.manifest, cast(dict, metadata))
+                        warnings.extend(field_warnings)
                         job = store.mark_ready(job["job_id"], lease.token, cast(dict, metadata))
                         if preflight is not None:
                             preflight(job)

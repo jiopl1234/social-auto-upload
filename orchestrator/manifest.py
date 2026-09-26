@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -19,12 +20,27 @@ _INPUT_FIELDS = frozenset({
 
 # Intake ceilings are intentionally conservative offline gates, not claims
 # about current platform limits.
+@dataclass(frozen=True)
+class Capability:
+    title_limit: int
+    body_limit: int
+    tag_limit: int
+    media_limit: int
+    cover_supported: bool
+    collection_supported: bool
+
+
 _CAPABILITIES = {
-    ("douyin", "video"): (55, 2200, 5, 1, True, True),
-    ("douyin", "note"): (30, 1000, 5, 9, True, True),
-    ("xiaohongshu", "video"): (20, 1000, 10, 1, True, False),
-    ("xiaohongshu", "note"): (20, 1000, 10, 9, True, False),
-    ("tencent", "video"): (30, 1000, 5, 1, True, True),
+    ("douyin", "video"): Capability(title_limit=55, body_limit=2200, tag_limit=5, media_limit=1,
+                                    cover_supported=True, collection_supported=True),
+    ("douyin", "note"): Capability(title_limit=30, body_limit=1000, tag_limit=5, media_limit=9,
+                                   cover_supported=True, collection_supported=True),
+    ("xiaohongshu", "video"): Capability(title_limit=20, body_limit=1000, tag_limit=10, media_limit=1,
+                                         cover_supported=True, collection_supported=False),
+    ("xiaohongshu", "note"): Capability(title_limit=20, body_limit=1000, tag_limit=10, media_limit=9,
+                                        cover_supported=True, collection_supported=False),
+    ("tencent", "video"): Capability(title_limit=30, body_limit=1000, tag_limit=5, media_limit=1,
+                                     cover_supported=True, collection_supported=True),
 }
 
 
@@ -90,9 +106,15 @@ def _validate_facts(manifest: dict[str, Any]) -> None:
     if not isinstance(declarations, dict):
         raise TaskError("INVALID_INPUT", "Declarations must be explicit", field="declarations")
     for field, value in declarations.items():
-        if field not in facts:
+        if field in {"originality_rights", "repost_authorized"}:
+            if type(value) is not bool:
+                raise TaskError("INVALID_INPUT", "Rights declaration must be boolean", field=f"declarations.{field}")
+            required_ownership = "original" if field == "originality_rights" else "repost"
+            if value and facts["ownership"] != required_ownership:
+                raise TaskError("INVALID_INPUT", "Rights declaration contradicts ownership", field=f"declarations.{field}")
+        elif field not in facts:
             raise TaskError("INVALID_INPUT", "Unknown declaration", field=f"declarations.{field}")
-        if value != facts[field]:
+        elif value != facts[field]:
             raise TaskError("INVALID_INPUT", "Declaration contradicts the stated fact", field=f"declarations.{field}")
 
 
@@ -121,24 +143,23 @@ def _validate_content(manifest: dict[str, Any]) -> None:
     limits = _CAPABILITIES.get((manifest["platform"], manifest["content_type"]))
     if limits is None:
         raise TaskError("UNSUPPORTED", "Content path is not supported", field="content_type")
-    title_limit, body_limit, tag_limit, media_limit, cover_supported, collection_supported = limits
-    for field, maximum in (("title", title_limit), ("body", body_limit)):
+    for field, maximum in (("title", limits.title_limit), ("body", limits.body_limit)):
         value = manifest.get(field)
         if not isinstance(value, str) or not value.strip() or len(value) > maximum:
             raise TaskError("INVALID_INPUT", f"{field} is missing or exceeds the offline limit", field=field)
     tags = manifest.get("tags")
-    if not isinstance(tags, list) or len(tags) > tag_limit or any(
+    if not isinstance(tags, list) or len(tags) > limits.tag_limit or any(
         not isinstance(tag, str) or not tag.strip() or len(tag) > 20 for tag in tags
     ) or len(tags) != len(set(tags)):
         raise TaskError("INVALID_INPUT", "Tags exceed the offline capability", field="tags")
     media = manifest.get("media")
-    if not isinstance(media, list) or not 1 <= len(media) <= media_limit:
+    if not isinstance(media, list) or not 1 <= len(media) <= limits.media_limit:
         raise TaskError("INVALID_INPUT", "Media count exceeds the offline capability", field="media")
-    if manifest.get("cover") is not None and not cover_supported:
+    if manifest.get("cover") is not None and not limits.cover_supported:
         raise TaskError("UNSUPPORTED", "Cover is not supported for this content path", field="cover")
     collection = manifest.get("collection")
     if collection is not None:
-        if not collection_supported:
+        if not limits.collection_supported:
             raise TaskError("UNSUPPORTED", "Collection is not supported for this content path", field="collection")
         if not isinstance(collection, str) or not collection.strip() or len(collection) > 64:
             raise TaskError("INVALID_INPUT", "Collection value is invalid", field="collection")

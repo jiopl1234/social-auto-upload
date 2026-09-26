@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from orchestrator.service import TaskService
 
@@ -78,3 +78,14 @@ def make_manifest(
     }
     manifest.update(overrides)
     return manifest
+
+
+def readback_metadata(manifest: Mapping[str, Any]) -> dict:
+    """Content applied by the controlled local target, independent of validators."""
+    return {
+        "title": manifest["title"], "body": manifest["body"], "tags": list(manifest["tags"]),
+        "media": [{"kind": item["kind"], "sha256": item["sha256"]} for item in manifest["media"]],
+        "cover": ({"kind": manifest["cover"]["kind"], "sha256": manifest["cover"]["sha256"]}
+                  if manifest.get("cover") is not None else None),
+        "collection": manifest.get("collection"), "declarations": dict(manifest["declarations"]),
+    }
