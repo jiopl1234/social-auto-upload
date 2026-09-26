@@ -8,7 +8,7 @@ Tracker: local Markdown
 |---|---|---|
 | 01 | [干净安装后可运行三平台 CLI，并恢复旧参数语义](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/01-runnable-cli-and-compatibility.md) | done |
 | 02 | [提交清单后获得可持久查询、可去重的单平台任务](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/02-durable-job-intake-and-query.md) | done |
-| 03 | [串行执行任务，同账号只允许一个写入者](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/03-single-writer-job-execution.md) | in-progress |
+| 03 | [串行执行任务，同账号只允许一个写入者](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/03-single-writer-job-execution.md) | done |
 | 04 | [发布前验证不可变清单、素材版本和声明事实](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/04-immutable-content-preflight.md) | ready-for-agent |
 | 05 | [提交后失联或崩溃时只核对结果，不重新发布](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/05-submission-boundary-and-recovery.md) | ready-for-agent |
 | 06 | [任务超时或取消后准时退出，并释放浏览器资源](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/06-bounded-runtime-and-cancellation.md) | ready-for-agent |
@@ -22,7 +22,7 @@ Tracker: local Markdown
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | ready-for-agent |
 | 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | ready-for-agent |
 
-当前 frontier：03。01、02 已完成并通过双线审查；其余 13 张票继续按依赖实施。每票验收结果以其自身记录为准，目标为完成全部 15 张票。
+当前 frontier：04、05。01–03 已完成并通过双线审查；其余 12 张票继续按依赖实施。每票验收结果以其自身记录为准，目标为完成全部 15 张票。
 
 01 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-review.md)。未进行真实账号发布测试，整个方案尚未达到无人值守生产验收状态。
 
