@@ -56,7 +56,7 @@ class DeliveryProcesses:
         return self
 
     def start(self, name: str, *, gate_stage: str | None = None,
-              max_attempts: int = 2) -> tuple[subprocess.Popen, dict]:
+              max_attempts: int = 2, omit_tags: bool = False) -> tuple[subprocess.Popen, dict]:
         config = {
             "db": str(self.tmp_path / "jobs.sqlite3"),
             "runtime": str(self.tmp_path / "runtime"),
@@ -72,6 +72,7 @@ class DeliveryProcesses:
             "deliveries": str(self.deliveries),
             "gate_stage": gate_stage,
             "max_attempts": max_attempts,
+            "omit_tags": omit_tags,
         }
         config_path = self.tmp_path / f"{name}.config.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -262,3 +263,57 @@ def test_prepare_crash_at_attempt_limit_records_failure_without_new_delivery(tmp
         assert len(service.attempts(job_id)) == 1
         assert read_jsonl(workers.deliveries) == []
         assert [call["stage"] for call in read_jsonl(workers.calls)] == ["prepare"]
+
+
+def test_omitted_tags_warning_survives_crash_after_write_before_receipt(tmp_path):
+    service = make_service(tmp_path)
+    policy = {
+        "required": ["title", "body", "media"],
+        "optional": ["tags", "cover", "collection"],
+        "allow_omit": ["tags"],
+    }
+    queued = service.enqueue(make_manifest(
+        tmp_path, key="omitted-tags-crash", tags=["requested"], field_policy=policy,
+    ))
+    job_id = queued["job_id"]
+
+    with DeliveryProcesses(tmp_path, job_id, "douyin") as workers:
+        first, first_config = workers.start("first", gate_stage="after_write", omit_tags=True)
+        written = workers.stage(first, first_config, "after_write")
+        crossing = service.status(job_id)
+        assert crossing["status"] == "SUBMITTING"
+        assert crossing["submission"] == "MAY_HAVE_SUBMITTED"
+        assert crossing["manifest"]["tags"] == ["requested"]
+        assert crossing["actual_metadata"]["tags"] == []
+        assert service.attempts(job_id)[0]["receipt_id"] is None
+        work = read_jsonl(workers.deliveries)
+        assert len(work) == 1
+        assert work[0]["metadata"] == crossing["actual_metadata"]
+        assert work[0]["metadata"]["tags"] == []
+        workers.kill(first, written["identity"])
+
+        recovery, recovery_config = workers.start("recovery", omit_tags=True)
+        recovered = workers.result(recovery, recovery_config)
+        assert recovered["kind"] == "job"
+        assert recovered["job"]["status"] == "COMPLETED"
+        assert recovered["job"]["submission"] == "CONFIRMED"
+        assert recovered["job"]["content_id"] == work[0]["content_id"]
+        assert any(
+            warning["code"] == "FIELD_OMITTED" and warning["field"] == "tags"
+            for warning in recovered["job"]["warnings"]
+        )
+        assert len(service.attempts(job_id)) == 1
+        assert service.attempts(job_id)[0]["attempt_id"] == written["attempt_id"]
+        assert len(read_jsonl(workers.deliveries)) == 1
+        assert [call["stage"] for call in read_jsonl(workers.calls)] == [
+            "prepare", "submit", "reconcile",
+        ]
+
+        repeated, repeated_config = workers.start("repeated", omit_tags=True)
+        again = workers.result(repeated, repeated_config)
+        assert again["job"]["status"] == "COMPLETED"
+        assert len(read_jsonl(workers.deliveries)) == 1
+        assert len(service.attempts(job_id)) == 1
+        assert [call["stage"] for call in read_jsonl(workers.calls)] == [
+            "prepare", "submit", "reconcile",
+        ]

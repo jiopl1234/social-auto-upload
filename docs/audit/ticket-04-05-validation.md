@@ -13,7 +13,7 @@
 
 完整命令：`uv run --frozen --with pytest --with pytest-timeout python -m pytest tests -q --timeout=30 --tb=short --junitxml=docs/audit/ticket-04-05-pytest.xml`。
 
-首轮结果为 136 项与 20 项子测试通过。独立审查修正实际元数据校验、独立权益声明和恢复警告后，完整复测：**156 passed, 20 subtests passed**，33.45 秒。当前原始输出为同目录 `ticket-04-05-pytest.txt` 与 XML；首轮输出保存在实现提交中。
+首轮结果为 136 项与 20 项子测试通过。独立审查修正实际元数据校验、独立权益声明和恢复警告后，复测 156 项通过。继续修正整个清单引用可替换及崩溃前遗漏警告未落库后，最终完整复测：**158 passed, 20 subtests passed**，34.53 秒。当前原始输出为同目录 `ticket-04-05-pytest.txt` 与 XML；此前输出保存在对应实现提交中。
 
 Pyright 检查 `orchestrator`、`sau_cli.py`、04/05 新测试、更新的任务/进程夹具、账号维护测试与 conftest：**0 errors, 0 warnings**。未宣称所有历史 uploader 类型检查通过。
 
@@ -24,3 +24,5 @@ Pyright 检查 `orchestrator`、`sau_cli.py`、04/05 新测试、更新的任务
 图证据采用 Tier 2，项目 `C-Users-Chinese-social-auto-upload`；本轮重建到 `2026-09-26T14:07:15Z`，1521 节点、6679 边。核心路径没有记录解析缺口，但工具报告 metadata_changed，因此依赖当前源码与固定提交 diff 补充核验；tests/fixtures 和文档为未索引内容，直接读取。
 
 修正后图重建为 `2026-09-26T14:23:48Z`，1556 节点、6944 边。新增红绿用例实际复现改写标题仍提交、独立权益声明无法入队、只读恢复丢失允许遗漏警告；修正后的七字段读回、声明独立性、素材数量/摘要与可选字段策略通过公共接口验证。
+
+第二轮复审补充：公共红测复现 `context.manifest` 整体替换仍可提交，现冻结整个 ExecutionContext，并以协调器持有的持久原清单进行比较。第五个真实强杀场景复现动作已生效、回执前崩溃导致 FIELD_OMITTED 丢失；现在 READY 的同一事务保存实际元数据、警告与事件，恢复后完整保留。

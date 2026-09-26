@@ -59,6 +59,12 @@ class LocalDeliveryTarget:
     def __init__(self, config: dict):
         self.config = config
 
+    def actual_metadata(self, manifest) -> dict:
+        metadata = readback_metadata(manifest)
+        if self.config.get("omit_tags"):
+            metadata["tags"] = []
+        return metadata
+
     async def checkpoint(self, stage: str, context) -> None:
         marker = str(Path(self.config["stage"]).with_suffix(f".{stage}.json"))
         write_json(marker, {
@@ -75,7 +81,7 @@ class LocalDeliveryTarget:
         })
         await self.checkpoint("prepare", context)
         context.assert_owner()
-        return readback_metadata(context.manifest)
+        return self.actual_metadata(context.manifest)
 
     async def submit(self, context) -> dict:
         context.assert_owner()
@@ -91,7 +97,7 @@ class LocalDeliveryTarget:
             "content_type": context.manifest["content_type"],
             "platform_result": "PUBLISHED",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": readback_metadata(context.manifest),
+            "metadata": self.actual_metadata(context.manifest),
             "media_sha256": [asset["sha256"] for asset in context.manifest["media"]],
             "source": "work_detail",
         }

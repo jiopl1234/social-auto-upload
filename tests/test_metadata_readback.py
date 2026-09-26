@@ -39,6 +39,25 @@ class ReadbackTarget:
         pass
 
 
+def test_adapter_cannot_replace_the_immutable_manifest_reference(tmp_path):
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+
+    class ReplacingTarget(ReadbackTarget):
+        async def prepare(self, context):
+            context.manifest = {**context.manifest, "title": "Changed on platform"}
+            self.actual = readback_metadata(context.manifest)
+            return self.actual
+
+    target = ReplacingTarget(service, readback_metadata(job["manifest"]))
+    result = asyncio.run(service.run_once(adapters={"douyin": target}, job_id=job["job_id"]))
+    assert result is not None
+    assert result["status"] == "FAILED_PRE_SUBMIT"
+    assert result["submission"] == "NOT_SUBMITTED"
+    assert target.writes == []
+    assert service.status(job["job_id"])["manifest"]["title"] == "Original title"
+
+
 def test_changed_title_readback_blocks_external_submission(tmp_path):
     service = make_service(tmp_path)
     manifest = make_manifest(tmp_path)

@@ -13,7 +13,7 @@ from orchestrator.ownership import AccountLease
 from orchestrator.store import Store
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionContext:
     job_id: str
     attempt_id: str
@@ -95,16 +95,16 @@ async def run_once(
                     context.assert_owner()
                     if not recovering:
                         if preflight is not None:
-                            context.manifest = preflight(job)
+                            preflight(job)
                         prepared = await adapter.prepare(context)
                         if not isinstance(prepared, dict):
                             raise TaskError("INVALID_RESULT", "Adapter preparation must return actual metadata")
                         metadata = json.loads(json.dumps(prepared, ensure_ascii=False, allow_nan=False))
                         context.assert_owner()
                     if full_delivery and not recovering:
-                        metadata, field_warnings = validate_prepared(context.manifest, cast(dict, metadata))
+                        metadata, field_warnings = validate_prepared(job["manifest"], cast(dict, metadata))
                         warnings.extend(field_warnings)
-                        job = store.mark_ready(job["job_id"], lease.token, cast(dict, metadata))
+                        job = store.mark_ready(job["job_id"], lease.token, cast(dict, metadata), warnings)
                         if preflight is not None:
                             preflight(job)
                         context.assert_owner()

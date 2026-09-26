@@ -422,18 +422,18 @@ class Store:
             rows = connection.execute("SELECT * FROM accounts ORDER BY platform, account").fetchall()
             return [{**dict(row), "pause_reason": self._decode(row["pause_reason"])} for row in rows]
 
-    def mark_ready(self, job_id: str, owner_token: str, metadata: dict) -> dict:
+    def mark_ready(self, job_id: str, owner_token: str, metadata: dict, warnings: list[dict] | None = None) -> dict:
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
             if job["status"] != "PREPARING" or job["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Task is not preparing for submission")
             now = _utc_now()
-            connection.execute("UPDATE jobs SET status = 'READY', actual_metadata_json = ?, updated_at = ? WHERE job_id = ?",
-                               (_canonical_json(metadata), now, job_id))
+            connection.execute("UPDATE jobs SET status = 'READY', actual_metadata_json = ?, warnings_json = ?, updated_at = ? WHERE job_id = ?",
+                               (_canonical_json(metadata), _canonical_json(warnings or []), now, job_id))
             connection.execute("UPDATE attempts SET status = 'READY' WHERE attempt_id = ?", (job["attempt_id"],))
-            connection.execute("INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, 'READY', 'prepare', ?, '{}')",
-                               (job_id, job["attempt_id"], now))
+            connection.execute("INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, 'READY', 'prepare', ?, ?)",
+                               (job_id, job["attempt_id"], now, _canonical_json({"warnings": warnings or []})))
             return self._job_from_row(self._job_row(connection, job_id))
 
     def begin_submission(self, job_id: str, owner_token: str) -> dict:
