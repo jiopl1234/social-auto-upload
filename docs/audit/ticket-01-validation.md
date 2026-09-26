@@ -8,7 +8,7 @@
 - 文档要求在 editable 安装前初始化 `conf.py`，已有配置不覆盖。修正不存在的 `cli_main` 打包项；Playwright 兼容入口通过 `legacy` extra 安装。
 - 恢复 `DouYinVideo` 原位置参数顺序，`collection_name` 只能通过关键字传入。
 - 更新过时的 CLI Namespace 和异步替身；它们暴露的抖音异常路径资源泄漏通过 `finally` 修复。关闭资源失败时继续清理其他资源，并保留原业务异常。
-- 小红书话题测试通过本地 HTML 检查正文保留和话题点击结果。视频号二维码测试等待实际图片生成再模拟关闭弹窗，不再以固定 150 ms 猜测截图完成时间。
+- 小红书话题测试通过本地 HTML 检查正文保留和话题点击结果：前置相似但错误的候选，把正确目标放在第二项。上传器按候选文字精确匹配，替代无条件点击首项。视频号二维码测试等待实际图片生成再模拟关闭弹窗，不再以固定 150 ms 猜测截图完成时间。
 
 ## 干净环境安装
 
@@ -36,10 +36,12 @@ uv run --frozen --with pyright pyright sau_cli.py tests/test_cli_startup.py test
 git diff --check
 ```
 
-- 完整测试：**50 passed, 20 subtests passed**，9.48 秒。原有测试未删除；新增 3 个测试。
+- 完整测试：**50 passed, 20 subtests passed**，10.15 秒。原有测试未删除；新增 3 个测试。
 - 定向 Pyright：**0 errors, 0 warnings**。这是上述三个文件的检查，不是整个历史仓库的类型检查。
 - `git diff --check`：通过。
 - 完整测试首次运行出现视频号测试截图/弹窗关闭竞态（49 通过、1 失败）；修正测试时序后，单文件及全套均通过。
+- Spec 审查发现只有一个话题候选的测试不能验证准确选择。补上前置干扰候选后，原实现出现 1 失败、9 通过；修复精确匹配后，该文件 10 通过，并重新通过全套测试。
+- 视频号夹具使用事件循环时钟限制等待，兼容项目声明的 Python 3.10；本次实际运行环境为 Python 3.12。
 
 原始结果：[文本](ticket-01-pytest.txt)、[JUnit XML](ticket-01-pytest.xml)。测试使用本机已安装的 Chrome 加载本地 HTML，没有访问平台发布页面。
 

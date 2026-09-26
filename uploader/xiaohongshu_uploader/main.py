@@ -449,9 +449,9 @@ class XiaoHongShuBaseUploader(BaseVideoUploader):
                     state="visible",
                     timeout=6000
                 )
-                first_item = page.locator('#creator-editor-topic-container .item').first
-                await first_item.wait_for(state="visible", timeout=4000)
-                await first_item.click()
+                topic_item = page.locator('#creator-editor-topic-container .item').get_by_text(tag, exact=True)
+                await topic_item.wait_for(state="visible", timeout=4000)
+                await topic_item.click()
             except Exception as exc:
                 xiaohongshu_logger.warning(
                     _msg("🏷️", f"话题『{tag}』未出现候选，跳过该标签继续发布: {exc}")

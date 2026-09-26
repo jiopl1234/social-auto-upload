@@ -236,6 +236,7 @@ class XiaohongshuUploaderTests(unittest.TestCase):
                           <p data-placeholder="输入正文描述"><br></p>
                         </div>
                         <div id="creator-editor-topic-container">
+                          <button class="item" onclick="document.querySelector('#selected-topic').textContent = this.textContent">话题1扩展</button>
                           <button class="item" onclick="document.querySelector('#selected-topic').textContent = this.textContent">话题1</button>
                         </div>
                         <output id="selected-topic"></output>
