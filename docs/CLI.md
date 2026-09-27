@@ -50,11 +50,13 @@ sau youtube --help
 
 ## 安装 patchright 浏览器
 
-Windows 下推荐先指定镜像，再安装 Chromium：
+先安装项目依赖，再在仓库目录使用同一虚拟环境安装 Chromium：
 
 ```powershell
-$env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright"; patchright install chromium
+uv run --frozen --offline --no-sync python -m patchright install chromium
 ```
+
+浏览器仍需联网下载。若提示可执行文件缺失、普通安装却立即结束，执行 `uv run --frozen --offline --no-sync python -m patchright install --force chromium`。详见[浏览器安装及误锁排障](install.md#5-安装-patchright-chromium)。
 
 ## 抖音 CLI 子命令
 

@@ -215,19 +215,13 @@ sau bilibili upload-video --account <account_name> --file videos/demo.mp4 --titl
 uv pip install -e .
 ```
 
-4. 如需浏览器驱动，优先使用：
-
-Windows PowerShell：
-
-```powershell
-$env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright"; patchright install chromium
-```
-
-Linux / macOS：
+4. 如需浏览器驱动，在项目虚拟环境中安装（不依赖系统 PATH）：
 
 ```bash
-PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright" patchright install chromium
+uv run --frozen --offline --no-sync python -m patchright install chromium
 ```
+
+若可执行文件缺失但普通安装立即结束，按上文「安装 patchright Chromium」使用 `--force` 重新安装；uv 的 `--offline` 不会禁止浏览器安装器联网下载。
 
 5. 安装完成后，优先检查：
 
