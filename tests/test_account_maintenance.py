@@ -29,6 +29,19 @@ PLATFORMS = (
 )
 
 
+@pytest.fixture
+def installed_chromium(monkeypatch):
+    """Keep stubbed Douyin logins independent of locally installed browsers."""
+    from patchright import async_api
+
+    driver = MagicMock()
+    driver.chromium.executable_path = sys.executable
+    driver_context = MagicMock()
+    driver_context.__aenter__ = AsyncMock(return_value=driver)
+    driver_context.__aexit__ = AsyncMock(return_value=False)
+    monkeypatch.setattr(async_api, "async_playwright", lambda: driver_context)
+
+
 @contextmanager
 def external_process_lock(lock_path: Path):
     """Hold the real OS lock from a second Python process."""
@@ -184,7 +197,7 @@ def test_legacy_video_rejects_before_check_and_allows_same_account_maintenance(
     assert probe_external_lock(lease.lock.path) == "acquired"
 
 
-def test_login_sessions_remain_separate_and_release_platform_lease(tmp_path, monkeypatch):
+def test_login_sessions_remain_separate_and_release_platform_lease(tmp_path, monkeypatch, installed_chromium):
     runtime = tmp_path / "runtime"
     monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
     (tmp_path / "legacy").mkdir()
@@ -209,7 +222,7 @@ def test_login_sessions_remain_separate_and_release_platform_lease(tmp_path, mon
                     pass
 
 
-def test_login_error_leaves_unconfirmed_resource_marker(tmp_path, monkeypatch):
+def test_login_error_leaves_unconfirmed_resource_marker(tmp_path, monkeypatch, installed_chromium):
     runtime = tmp_path / "runtime"
     monkeypatch.setenv("SAU_RUNTIME_DIR", str(runtime))
     (tmp_path / "legacy").mkdir()

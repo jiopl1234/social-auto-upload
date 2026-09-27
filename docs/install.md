@@ -78,21 +78,23 @@ uv pip install -e ".[legacy]"
 
 ### 5. 安装 patchright Chromium
 
-当前主线使用 `patchright` 驱动浏览器。
-
-国内用户推荐先指定镜像，再安装 Chromium。
-
-Windows PowerShell：
-
-```powershell
-$env:PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright"; patchright install chromium
-```
-
-Linux / macOS：
+当前主线使用 `patchright` 驱动浏览器。安装好上一步的项目依赖后，在仓库目录执行（Windows PowerShell、Linux / macOS 相同）：
 
 ```bash
-PLAYWRIGHT_DOWNLOAD_HOST="https://npmmirror.com/mirrors/playwright" patchright install chromium
+uv run --frozen --offline --no-sync python -m patchright install chromium
 ```
+
+该命令使用项目虚拟环境，无需把 `playwright` 或 `patchright` 添加到系统 PATH。这里的 `--offline --no-sync` 只约束 uv 的 Python 依赖处理；浏览器安装器仍需联网下载。
+
+若提示 `Executable doesn't exist`，但安装命令立即结束，缓存可能保留了安装完成标记而丢失可执行文件。强制重新安装：
+
+```bash
+uv run --frozen --offline --no-sync python -m patchright install --force chromium
+```
+
+抖音 `login` 和已有会话的 `check` 会在启动账号浏览器前检查 bundled Chromium；文件缺失时给出上述修复命令，修复后可直接重试。不存在账号的 `check` 仍直接返回 `invalid`。这两个维护入口使用 `channel="chromium"`，不会因设置 `LOCAL_CHROME_PATH` 而改用系统 Chrome。
+
+如果旧版本已留下 `The previous browser shutdown has not been confirmed`，重新安装浏览器不会自动清除该保护。需先核实原执行器和关联浏览器确已退出，再由维护流程持锁恢复对应的所有权记录；不要删除整个运行目录或锁文件。
 
 ### 6. 验证 CLI 是否可用
 

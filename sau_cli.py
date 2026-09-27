@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, Sequence, cast
 
 from conf import BASE_DIR
-from orchestrator.legacy_resources import run_with_lease
+from orchestrator.legacy_resources import require_bundled_chromium, run_with_lease
 from orchestrator.ownership import AccountLease, default_runtime_dir
 from orchestrator.platforms.legacy import require_task_delivery
 
@@ -243,6 +243,7 @@ def parse_schedule(raw_schedule: str | None) -> datetime | int:
 async def login_douyin_account(account_name: str, headless: bool = True) -> dict:
     with AccountLease(default_runtime_dir(), "douyin", account_name) as lease:
         account_file = resolve_account_file("douyin", account_name)
+        await require_bundled_chromium()
         from uploader.douyin_uploader.main import douyin_setup
 
         return cast(dict, await run_with_lease(
@@ -255,6 +256,7 @@ async def check_douyin_account(account_name: str) -> bool:
         account_file = resolve_account_file("douyin", account_name)
         if not account_file.exists():
             return False
+        await require_bundled_chromium()
         from uploader.douyin_uploader.main import cookie_auth as douyin_cookie_auth
 
         return await run_with_lease(lease, lambda: douyin_cookie_auth(str(account_file)))
