@@ -125,6 +125,40 @@ def test_cancelling_pending_executor_does_not_claim_the_next_job(tmp_path):
     assert len(target.writes) == 1
 
 
+def test_cancellation_between_deliveries_does_not_claim_next_job(tmp_path, monkeypatch):
+    service = make_service(tmp_path)
+    first = service.enqueue(make_manifest(tmp_path, key="first"))
+    second = service.enqueue(make_manifest(tmp_path, key="second"))
+    target = PublishingTarget(service)
+    run_once = service.run_once
+
+    async def cancel_after_first_result(**kwargs):
+        result = await run_once(**kwargs)
+        if result is not None and result["job_id"] == first["job_id"]:
+            executor = asyncio.current_task()
+            assert executor is not None
+            executor.cancel()
+        return result
+
+    monkeypatch.setattr(service, "run_once", cancel_after_first_result)
+
+    async def execute_then_explicitly_resume():
+        results = await service.run_pending(adapters={"douyin": target})
+        assert [result["job_id"] for result in results] == [first["job_id"]]
+        assert results[0]["status"] == "COMPLETED"
+        assert service.status(first["job_id"]) == results[0]
+        assert service.status(second["job_id"])["status"] == "QUEUED"
+        assert service.attempts(second["job_id"]) == []
+        assert len(target.writes) == 1
+
+        resumed = await service.run_pending(adapters={"douyin": target})
+        assert [result["job_id"] for result in resumed] == [second["job_id"]]
+        assert resumed[0]["status"] == "COMPLETED"
+        assert len(target.writes) == 2
+
+    asyncio.run(execute_then_explicitly_resume())
+
+
 @pytest.mark.parametrize("phase", ["submit", "cleanup", "cleanup_after_error"])
 def test_pending_executor_stops_when_cancellation_is_a_delivery_warning(tmp_path, phase):
     service = make_service(tmp_path)

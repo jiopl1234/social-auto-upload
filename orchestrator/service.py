@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -121,6 +122,12 @@ class TaskService:
                           limits: dict[str, float] | None = None) -> list[dict]:
         completed = []
         while True:
+            # Deliver cancellation requested between results before run_once
+            # can synchronously claim another task ahead of its first await.
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                return completed
             result = await self.run_once(adapters=adapters, max_attempts=max_attempts, limits=limits)
             if result is None:
                 return completed
