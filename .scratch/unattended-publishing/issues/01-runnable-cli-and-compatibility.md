@@ -29,3 +29,5 @@
 证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-01-review.md)。
 
 限制：本次为安装和离线行为验收，未操作真实账号或发布内容。后续任务系统、提交后恢复及平台完整验证仍由 02–15 号票实施，01 完成不代表无人值守生产就绪。
+
+2026-09-27 安装补修：`10b77f6` 为抖音维护入口增加浏览器可执行文件预检，缺失时给出项目环境的强制安装命令，连续重试不再遗留误锁；`09416a1` 统一用户与 agent 的安装说明。新增三个公共 CLI 子进程回归。[修复、维护与验收记录](C:/Users/Chinese/social-auto-upload/docs/audit/douyin-browser-startup-2026-09-27.md)。

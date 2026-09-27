@@ -23,3 +23,5 @@
 2026-09-26，实现提交 `f91f3e7`、`e3ececb`、`01e5268`。完整离线测试 85 passed、20 subtests passed，定向 Pyright 0 错误；Windows 真实子进程竞争、残留资源阻断和公共维护入口均通过。Spec 的嵌套清理 P1 已修复并独立复核；Standards 无硬性违反，两个非阻断重复代码 P3 由 06 号票集中生命周期时承接。
 
 证据：[验证](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-03-validation.md)、[审查](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-03-review.md)、[公共接口说明](C:/Users/Chinese/social-auto-upload/docs/tasks.md)。本票执行到准备结果，不把 READY 当平台成功；提交与恢复由 05 接入。
+
+2026-09-27 补充修复：`10b77f6` 在持有账号锁后、标记浏览器资源前检查抖音维护所需的 Chromium，避免缺失可执行文件造成错误的关闭未确认标记。实际资源异常仍保留原保护，不新增强制接管接口。[故障复现与验收](C:/Users/Chinese/social-auto-upload/docs/audit/douyin-browser-startup-2026-09-27.md)。

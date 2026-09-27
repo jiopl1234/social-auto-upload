@@ -1,0 +1,174 @@
+.................................................... [ 13%]
+........................................................................ [ 33%]
+........................................................................ [ 52%]
+........................................................................ [ 72%]
+.......F................................................................ [ 91%]
+................................                                         [100%]
+================================== FAILURES ===================================
+_ test_delayed_response_and_cancel_preserve_one_delivery[douyin-video-False] __
+
+    async def wait_for_write():
+        while not site.submissions:
+>           await asyncio.sleep(0.01)
+
+tests\test_release_acceptance.py:36: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+delay = 0.01, result = None
+
+    async def sleep(delay, result=None):
+        """Coroutine that completes after a given time (in seconds)."""
+        if delay <= 0:
+            await __sleep0()
+            return result
+    
+        loop = events.get_running_loop()
+        future = loop.create_future()
+        h = loop.call_later(delay,
+                            futures._set_result_unless_cancelled,
+                            future, result)
+        try:
+>           return await future
+                   ^^^^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\tasks.py:665: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = WindowsPath('C:/Users/Chinese/AppData/Local/Temp/pytest-of-Chinese/pytest-415/test_delayed_response_and_canc0')
+platform = 'douyin', kind = 'video', cancel = False
+
+    @pytest.mark.parametrize("platform,kind,cancel", [(p, k, False) for p, k in EXPECTED_DELIVERY_PATHS] +
+                             [(p, "video", True) for p in ("douyin", "xiaohongshu", "tencent")])
+    def test_delayed_response_and_cancel_preserve_one_delivery(tmp_path, platform, kind, cancel):
+        service = make_service(tmp_path)
+        job = service.enqueue(make_manifest(tmp_path, platform=platform, content_type=kind))
+        with CreatorSite(platform, mode="delayed-response") as site:
+            async def exercise():
+                running = asyncio.create_task(service.run_once(adapters={platform: fixture_adapter(service, site)},
+                    job_id=job["job_id"], limits={"total": 20, "cleanup": 3}))
+                async def wait_for_write():
+                    while not site.submissions:
+                        await asyncio.sleep(0.01)
+                await asyncio.wait_for(wait_for_write(), timeout=10)
+                assert service.status(job["job_id"])["status"] == "SUBMITTING"
+                assert service.attempts(job["job_id"])[0]["submit_count"] == 1
+                if cancel:
+                    running.cancel()
+                else:
+                    site.response_gate.set()
+                result = await asyncio.wait_for(running, timeout=6)
+                site.response_gate.set()
+                return result
+>           result = asyncio.run(exercise())
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_release_acceptance.py:47: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_release_acceptance.py:37: in exercise
+    await asyncio.wait_for(wait_for_write(), timeout=10)
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x000001884BB62000>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+..\AppData\Local\Programs\Python\Python312\Lib\asyncio\timeouts.py:115: TimeoutError
+============================== warnings summary ===============================
+tests/test_release_acceptance.py::test_delayed_response_and_cancel_preserve_one_delivery[tencent-video-False]
+  C:\Users\Chinese\social-auto-upload\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function _ProactorBasePipeTransport.__del__ at 0x000001882A441080>
+  
+  Traceback (most recent call last):
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\proactor_events.py", line 116, in __del__
+      _warn(f"unclosed transport {self!r}", ResourceWarning, source=self)
+                                 ^^^^^^^^
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\proactor_events.py", line 80, in __repr__
+      info.append(f'fd={self._sock.fileno()}')
+                        ^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\windows_utils.py", line 102, in fileno
+      raise ValueError("I/O operation on closed pipe")
+  ValueError: I/O operation on closed pipe
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_release_acceptance.py::test_delayed_response_and_cancel_preserve_one_delivery[tencent-video-False]
+  C:\Users\Chinese\social-auto-upload\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x000001882A4137E0>
+  
+  Traceback (most recent call last):
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_subprocess.py", line 125, in __del__
+      _warn(f"unclosed transport {self!r}", ResourceWarning, source=self)
+                                 ^^^^^^^^
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_subprocess.py", line 78, in __repr__
+      info.append(f'stdout={stdout.pipe}')
+                           ^^^^^^^^^^^^^
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\proactor_events.py", line 80, in __repr__
+      info.append(f'fd={self._sock.fileno()}')
+                        ^^^^^^^^^^^^^^^^^^^
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\windows_utils.py", line 102, in fileno
+      raise ValueError("I/O operation on closed pipe")
+  ValueError: I/O operation on closed pipe
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+tests/test_release_acceptance.py::test_delayed_response_and_cancel_preserve_one_delivery[tencent-video-False]
+  C:\Users\Chinese\social-auto-upload\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseSubprocessTransport.__del__ at 0x000001882A4137E0>
+  
+  Traceback (most recent call last):
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_subprocess.py", line 126, in __del__
+      self.close()
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_subprocess.py", line 104, in close
+      proto.pipe.close()
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\proactor_events.py", line 109, in close
+      self._loop.call_soon(self._call_connection_lost, None)
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 799, in call_soon
+      self._check_closed()
+    File "C:\Users\Chinese\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 545, in _check_closed
+      raise RuntimeError('Event loop is closed')
+  RuntimeError: Event loop is closed
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_release_acceptance.py::test_delayed_response_and_cancel_preserve_one_delivery[douyin-video-False]
+1 failed, 371 passed, 3 warnings, 20 subtests passed in 448.18s (0:07:28)
