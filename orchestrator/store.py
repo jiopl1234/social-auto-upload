@@ -547,6 +547,10 @@ class Store:
             return True
         error = self._decode(job["error_json"])
         count = connection.execute("SELECT COUNT(*) FROM attempts WHERE job_id = ?", (job["job_id"],)).fetchone()[0]
+        if job["status"] == "READY":
+            return count < max_attempts and any(
+                item.get("kind") == "preparation_only" and item.get("attempt_id") == job["attempt_id"]
+                for item in json.loads(job["evidence_json"]))
         return (job["status"] == "FAILED_PRE_SUBMIT" and isinstance(error, dict)
                 and error.get("code") == "TRANSIENT_PRE_SUBMIT" and count < max_attempts)
 
@@ -704,7 +708,8 @@ class Store:
             )
             return self._job_from_row(self._job_row(connection, job_id))
 
-    def finish_preparation(self, job_id: str, owner_token: str, *, status: str, metadata=None, error=None, warnings=None, pause_reason=None) -> dict:
+    def finish_preparation(self, job_id: str, owner_token: str, *, status: str, metadata=None, error=None, warnings=None,
+                           pause_reason=None, preparation_only: bool = False) -> dict:
         if status not in {"READY", "FAILED_PRE_SUBMIT", "BLOCKED", "CANCELLED"}:
             raise TaskError("INVALID_STATE", "Invalid preparation result")
         error = diagnostic_error(error) if error is not None else None
@@ -714,6 +719,12 @@ class Store:
             job = self._job_row(connection, job_id)
             if job["status"] not in {"PREPARING", "READY"} or job["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Task is not preparing")
+            if status == "READY" and preparation_only:
+                evidence = [item for item in json.loads(job["evidence_json"])
+                            if item.get("kind") != "preparation_only"]
+                evidence.append({"kind": "preparation_only", "attempt_id": job["attempt_id"]})
+                connection.execute("UPDATE jobs SET evidence_json = ? WHERE job_id = ?",
+                                   (_canonical_json(evidence), job_id))
             now = self._utc_now()
             connection.execute(
                 """UPDATE jobs SET status = ?, actual_metadata_json = ?, error_json = ?, warnings_json = ?, updated_at = ?

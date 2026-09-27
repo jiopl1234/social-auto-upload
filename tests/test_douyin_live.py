@@ -73,6 +73,19 @@ def test_prepare_only_checks_live_controls_without_crossing_submission_boundary(
         assert site.submissions == []
         assert service.attempts(job["job_id"])[0]["submit_count"] == 0
 
+        # Preparation is deliberately closed, so a later executor must create
+        # a fresh preparation attempt before delivering the same durable job.
+        from orchestrator.service import TaskService
+        restarted = TaskService(service.store.path, runtime_dir=service.runtime_dir, media_roots=[tmp_path / "media"])
+        limited = asyncio.run(restarted.run_once(adapters={"douyin": site.adapter(restarted)},
+            job_id=job["job_id"], max_attempts=1))
+        assert limited is not None and limited["status"] == "READY"
+        assert len(restarted.attempts(job["job_id"])) == 1
+        result = asyncio.run(restarted.run_once(adapters={"douyin": site.adapter(restarted)}, job_id=job["job_id"]))
+        assert result is not None and result["status"] == "COMPLETED", result
+        assert len(site.submissions) == 1
+        assert [attempt["submit_count"] for attempt in restarted.attempts(job["job_id"])] == [0, 1]
+
 
 @pytest.mark.parametrize("mode,status,code", [
     ("wrong-account", "BLOCKED", "IDENTITY_MISMATCH"),
@@ -80,6 +93,11 @@ def test_prepare_only_checks_live_controls_without_crossing_submission_boundary(
     ("challenge", "UNKNOWN_COMMIT", "AUTH_REQUIRED"),
     ("lost-receipt", "UNKNOWN_COMMIT", "SUBMISSION_UNCERTAIN"),
     ("replaced-preview", "FAILED_PRE_SUBMIT", "UPLOAD_FAILED"),
+    ("missing-covers", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
+    ("submit-auth", "UNKNOWN_COMMIT", "AUTH_REQUIRED"),
+    ("worklist-auth", "UNKNOWN_COMMIT", "AUTH_REQUIRED"),
+    ("removed-cover-after-ready", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
+    ("changed-cover-after-ready", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
 ])
 def test_real_port_failure_preserves_submission_and_account_state(tmp_path, mode, status, code):
     from tests.douyin_fixture import DouyinSite
@@ -89,10 +107,11 @@ def test_real_port_failure_preserves_submission_and_account_state(tmp_path, mode
     second = service.enqueue(make_manifest(tmp_path, key="second"))
     with DouyinSite(mode) as site:
         result = asyncio.run(service.run_once(adapters={"douyin": site.adapter(service)}, job_id=first["job_id"],
-            limits={"total": 25, "cleanup": 4, "processing": 1, "submit": 2}))
+            limits={"total": 25, "cleanup": 4, "processing": 1, "submit": 2, "reconcile": 2}))
         assert result is not None
         assert result["status"] == status, result["error"]
-        assert result["error"]["code"] == code
+        diagnostics = ([result["error"]] if result["error"] else []) + result["warnings"]
+        assert code in {item["code"] for item in diagnostics}
         assert len(site.submissions) == (1 if status == "UNKNOWN_COMMIT" else 0)
         if code in {"AUTH_REQUIRED", "IDENTITY_MISMATCH"}:
             next_result = asyncio.run(service.run_once(adapters={"douyin": site.adapter(service)}, job_id=second["job_id"]))
@@ -155,6 +174,35 @@ def test_readonly_inspection_never_creates_a_delivery(tmp_path):
         assert result["status"] == "NOT_FOUND"
         assert service.list_jobs() == []
         assert site.submissions == []
+
+
+def test_inspection_closes_browser_after_ownership_is_lost(tmp_path):
+    from orchestrator.browser import BrowserSession
+    from orchestrator.errors import TaskError
+    from orchestrator.inspection import inspect_work
+    from tests.test_browser_lifecycle import DriverHarness
+
+    service = make_service(tmp_path)
+    harness = DriverHarness()
+
+    def session_factory(context):
+        harness.context = context
+        return BrowserSession(context, driver_factory=harness.start)
+
+    class LostOwnershipPort:
+        async def navigate(self, page, content_type, *, readonly):
+            context = harness.context
+            assert context is not None
+            context.lease.token = "no-longer-the-owner"
+
+    with pytest.raises(TaskError) as caught:
+        asyncio.run(inspect_work(service, "douyin", "creator", "123",
+            port_factory=LostOwnershipPort, session_factory=session_factory))
+    assert caught.value.code == "OWNERSHIP_LOST"
+    assert harness.driver is not None and harness.driver.stopped
+    assert harness.browser is not None and harness.browser.closed
+    assert harness.browser.context is not None and harness.browser.context.closed
+    assert service.list_jobs() == []
 
 
 def test_pre_submit_pause_resumes_same_job_only_after_explicit_session_rebind(tmp_path):

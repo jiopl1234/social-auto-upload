@@ -44,7 +44,7 @@ class DouyinVideoPort(DomPagePort):
         self.commit: dict | None = None
         self.asset: Mapping[str, Any] | None = None
         self.media_ready = False
-        self.cover_ready = False
+        self.saved_covers: list[str] | None = None
         self.in_cover_editor = False
         self.observed_receipt: dict | None = None
         self.receipt_failed = False
@@ -64,13 +64,18 @@ class DouyinVideoPort(DomPagePort):
     async def _drain(self) -> None:
         while self.pending_responses:
             response = self.pending_responses.popleft()
+            url = urlsplit(response.url)
+            account_response = url.path in {IDENTITY_PATH, WORKS_PATH, SUBMIT_PATH}
+            if account_response and response.status in {401, 403}:
+                raise TaskError("AUTH_REQUIRED", "Account authentication is required")
             try:
                 payload = await response.json()
             except Exception:
                 continue
             if not isinstance(payload, dict) or response.status != 200:
                 continue
-            url = urlsplit(response.url)
+            if account_response and payload.get("status_code") == 8:
+                raise TaskError("AUTH_REQUIRED", "Account authentication is required")
             if url.path == IDENTITY_PATH:
                 uid = payload.get("user", {}).get("uid")
                 if payload.get("status_code") != 0 or not isinstance(uid, str) or not uid:
@@ -78,8 +83,9 @@ class DouyinVideoPort(DomPagePort):
                 self.identity = uid
                 self.identity_cookie_digest = await self._cookie_digest()
             elif url.path == WORKS_PATH:
-                if payload.get("status_code") == 0:
-                    self.works = self.work_observations(payload)
+                if payload.get("status_code") != 0:
+                    raise TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work verification is unavailable")
+                self.works = self.work_observations(payload)
             elif url.path == SUBMIT_PATH and self.submitted and response.request.method == "POST":
                 content_id = payload.get("item_id")
                 if payload.get("status_code") == 0 and isinstance(content_id, str) and content_id.isdigit():
@@ -166,17 +172,21 @@ class DouyinVideoPort(DomPagePort):
                         or meta.get("Size") != manifest["media"][0]["version"]["size_bytes"]
                         or not isinstance(vid, str) or not vid or not isinstance(meta.get("Uri"), str)):
                     raise TaskError("UPLOAD_FAILED", "One or more media files failed processing", field="media")
-                videos = await page.locator("video").evaluate_all("""els => els.map(v => ({
-                    ready:v.readyState, width:v.videoWidth, height:v.videoHeight,
-                    duration:v.duration, src:v.currentSrc || v.src}))""")
-                if len(videos) == 1:
-                    video = videos[0]
-                    if (video["ready"] >= 2 and video["width"] == meta.get("Width")
-                            and video["height"] == meta.get("Height") and video["duration"] > 0
-                            and urlsplit(video["src"]).path.endswith("/" + meta["Uri"])):
-                        self.media_ready = True
-                        return
+                if await self._preview_ready(page):
+                    self.media_ready = True
+                    return
             await asyncio.sleep(0.1)
+
+    async def _preview_ready(self, page: Any) -> bool:
+        meta = self.commit.get("VideoMeta", {}) if self.commit is not None else {}
+        uri = meta.get("Uri")
+        videos = await page.locator("video").evaluate_all("""els => els.map(v => ({
+            ready:v.readyState, width:v.videoWidth, height:v.videoHeight,
+            duration:v.duration, src:v.currentSrc || v.src}))""")
+        return (isinstance(uri, str) and bool(uri) and len(videos) == 1
+                and videos[0]["ready"] >= 2 and videos[0]["width"] == meta.get("Width")
+                and videos[0]["height"] == meta.get("Height") and videos[0]["duration"] > 0
+                and urlsplit(videos[0]["src"]).path.endswith("/" + uri))
 
     @property
     def media_observation(self) -> dict | None:
@@ -199,9 +209,36 @@ class DouyinVideoPort(DomPagePort):
             await dialog.locator('[class^="preview-frame-"]').first.click(timeout=5000)
             await dialog.get_by_role("button", name="完成", exact=True).click(timeout=5000)
             await dialog.wait_for(state="hidden", timeout=5000)
-            self.cover_ready = True
         finally:
             self.in_cover_editor = False
+        self.saved_covers = await self._cover_observation(page)
+
+    async def _cover_observation(self, page: Any) -> list[str]:
+        # Anchor each image to its visible editor label. Never infer a saved
+        # cover from a dismissed dialog; keep source identities only in memory.
+        observed = []
+        for label in ("竖封面3:4", "横封面4:3"):
+            control = page.get_by_text(label, exact=True)
+            if await control.count() != 1 or not await control.is_visible():
+                raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="cover")
+            source = await control.evaluate("""async el => {
+                for(let node=el.parentElement; node && node !== document.body; node=node.parentElement) {
+                    if(node.textContent.includes('竖封面3:4') && node.textContent.includes('横封面4:3')) break;
+                    const images=[...node.querySelectorAll('img')].filter(img=>img.getClientRects().length);
+                    if(images.length) {
+                        const img=images[0];
+                        if(images.length!==1) return null;
+                        try { await img.decode(); } catch { return null; }
+                        return images.length===1 && img.complete && img.naturalWidth>0 && img.naturalHeight>0
+                            ? img.currentSrc || img.src : null;
+                    }
+                }
+                return null;
+            }""")
+            if not isinstance(source, str) or not source:
+                raise TaskError("METADATA_MISMATCH", "Saved cover is not ready", field="cover")
+            observed.append(hashlib.sha256(source.encode()).hexdigest())
+        return observed
 
     async def _settings(self, page: Any) -> None:
         for name in ("公开", "立即发布"):
@@ -223,15 +260,10 @@ class DouyinVideoPort(DomPagePort):
     async def readback(self, page: Any) -> dict:
         await self.check_challenge(page)
         await self._settings(page)
-        if not self.media_ready or not self.cover_ready or self.asset is None:
+        if not self.media_ready or self.asset is None or not await self._preview_ready(page):
             raise TaskError("UPLOAD_FAILED", "Media is no longer ready", field="media")
-        videos = await page.locator("video").evaluate_all("""els => els.map(v => ({
-            ready:v.readyState, width:v.videoWidth, height:v.videoHeight, src:v.currentSrc || v.src}))""")
-        meta = self.commit["VideoMeta"] if self.commit is not None else {}
-        if (len(videos) != 1 or videos[0]["ready"] < 2 or videos[0]["width"] != meta.get("Width")
-                or videos[0]["height"] != meta.get("Height")
-                or not urlsplit(videos[0]["src"]).path.endswith("/" + meta.get("Uri", ""))):
-            raise TaskError("UPLOAD_FAILED", "Media is no longer ready", field="media")
+        if self.saved_covers is None or await self._cover_observation(page) != self.saved_covers:
+            raise TaskError("METADATA_MISMATCH", "Saved cover changed before submission", field="cover")
         title = await self._control(page, self.selectors.title, "title")
         body = await self._control(page, self.selectors.body, "body")
         return {"title": await title.input_value(), "body": await body.inner_text(), "tags": [],

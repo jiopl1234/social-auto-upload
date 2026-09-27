@@ -313,7 +313,8 @@ async def run_once(
                           else "FAILED_PRE_SUBMIT" if error else "READY")
                 return store.finish_preparation(job["job_id"], lease.token, status=status,
                                                 metadata=metadata, error=error.as_dict() if error else None,
-                                                warnings=warnings, pause_reason=pause_reason)
+                                                warnings=warnings, pause_reason=pause_reason,
+                                                preparation_only=getattr(adapter, "preparation_only", False) is True)
         except TaskError as exc:
             if job_id is None and exc.code in {"ACCOUNT_BUSY", "RESOURCES_UNCONFIRMED"}:
                 continue

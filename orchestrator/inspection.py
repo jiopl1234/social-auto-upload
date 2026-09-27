@@ -30,7 +30,8 @@ class InspectionContext:
         return self.budget.time_left(stage)
 
     async def run_stage(self, stage, operation):
-        self.assert_owner()
+        if stage != "cleanup":
+            self.assert_owner()
         return await self.budget.run(stage, operation)
 
 

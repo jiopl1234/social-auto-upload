@@ -190,6 +190,8 @@ class BrowserDeliveryAdapter:
 
 class PreparationOnlyAdapter:
     """Explicit CLI preparation, with no submission or reconciliation methods."""
+    preparation_only = True
+
     def __init__(self, adapter: BrowserDeliveryAdapter):
         self.adapter = adapter
 

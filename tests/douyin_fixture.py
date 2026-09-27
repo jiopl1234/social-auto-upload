@@ -16,8 +16,9 @@ HTML = """<!doctype html><meta charset="utf-8"><body>
 <section id=editor hidden>
 <input placeholder="填写作品标题，为作品获得更多流量" maxlength=30>
 <div class="zone-container" contenteditable=true></div>
-<button id=cover>选择封面</button><span>竖封面3:4</span><span>横封面4:3</span>
-<div id=covers></div><div class=semi-select>请选择合集</div>
+<button id=cover>选择封面</button>
+<div id=portrait><span>竖封面3:4</span></div><div id=landscape><span>横封面4:3</span></div>
+<div class=semi-select>请选择合集</div>
 <div class=semi-select>请选择自主声明</div>
 <label data-checked=true><input type=checkbox checked>公开</label>
 <label data-checked=true><input type=checkbox checked>立即发布</label>
@@ -44,7 +45,14 @@ document.querySelector('#cover').onclick=()=>{
   modal.innerHTML='<span>设置竖封面</span><div class="preview-frame-replay">frame</div><button id="landscape">设置横封面</button><button id="finish">完成</button>';
   document.body.append(modal);
   modal.querySelector('#landscape').onclick=()=>{modal.querySelector('span').textContent='设置横封面';};
-  modal.querySelector('#finish').onclick=()=>{document.querySelector('#covers').innerHTML='<img alt="竖封面" src="/cover"><img alt="横封面" src="/cover">';modal.remove();if(mode==='replaced-preview')document.querySelector('video').src='/different-video';};
+  modal.querySelector('#finish').onclick=()=>{
+    if(mode!=='missing-covers') {
+      document.querySelector('#portrait').insertAdjacentHTML('beforeend','<img src="/cover">');
+      document.querySelector('#landscape').insertAdjacentHTML('beforeend','<img src="/cover">');
+    }
+    modal.remove();
+    if(mode==='replaced-preview')document.querySelector('video').src='/different-video';
+  };
 };
 document.querySelector('#publish').onclick=async()=>{
   const payload={title:document.querySelector('input[placeholder]').value,body:document.querySelector('[contenteditable]').innerText};
@@ -82,11 +90,16 @@ class DouyinSite:
                 if path == "/web/api/media/user/info/":
                     return self.send({"status_code": 0, "user": {"uid": "other" if site.mode == "wrong-account" else "douyin:creator"}})
                 if path == "/janus/douyin/creator/pc/work_list":
+                    if site.mode == "worklist-auth":
+                        return self.send({"status_code": 8, "status_msg": "用户未登录"})
                     return self.send({"status_code": 0, "aweme_list": [] if site.hide_works else site.works})
                 if path.startswith("/creator-micro/"):
                     return self.send(HTML.replace("__MODE__", json.dumps(site.mode)), "text/html; charset=utf-8")
                 if path == "/tos-cn-v/fixture-video":
                     return self.send((Path(__file__).parent / "fixtures/douyin-preview.webm").read_bytes(), "video/webm")
+                if path in {"/cover", "/changed-cover"}:
+                    from tests.task_fixtures import IMAGE_BYTES
+                    return self.send(IMAGE_BYTES, "image/png")
                 self.send_error(404)
 
             def do_POST(self):
@@ -113,6 +126,8 @@ class DouyinSite:
                     site.works[-1]["status"].pop("in_reviewing")
                 if site.mode == "duplicate-work":
                     site.works.append(dict(site.works[-1]))
+                if site.mode == "submit-auth":
+                    return self.send({"status_code": 8, "status_msg": "用户未登录"})
                 return self.send({"status_code": 0, **({} if site.mode in {"lost-receipt", "challenge"}
                     else {"item_id": "7690181573743742254"})})
 
@@ -138,6 +153,17 @@ class DouyinSite:
             origin = site.origin
             upload_origin = site.origin
 
-        return BrowserDeliveryAdapter(service.runtime_dir, ReplayPort,
+        class ReplayAdapter(BrowserDeliveryAdapter):
+            async def prepare(self, context):
+                result = await super().prepare(context)
+                # A local page change after successful preparation must be
+                # caught by the public service's final readiness check.
+                if site.mode == "removed-cover-after-ready":
+                    await self.page.locator('#landscape img').evaluate("img=>img.remove()")
+                elif site.mode == "changed-cover-after-ready":
+                    await self.page.locator('#landscape img').evaluate("img=>img.src='/changed-cover'")
+                return result
+
+        return ReplayAdapter(service.runtime_dir, ReplayPort,
             session_factory=lambda context: BrowserSession(context, launch_options={
                 "headless": True, "executable_path": str(_installed_chromium_executable())}))

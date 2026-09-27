@@ -48,7 +48,13 @@ uv run --frozen --offline --no-sync sau jobs status JOB_ID
 
 `run` 会公开发表。`COMPLETED/CONFIRMED/PUBLISHED` 才表示已核实公开作品；审核中单独返回 `IN_REVIEW`。退出码 0 不能代替任务字段的判断。
 
-发布前可运行 `run --job JOB_ID --prepare-only --headed`：上传素材、选择封面并核对字段，平台可能保存草稿，但绝不点击发表。结果为 `READY/NOT_SUBMITTED`，浏览器关闭。以后正常运行会重新准备并消耗另一次尝试；默认最多 2 次，可明确指定 `--max-attempts 3`（最大 5）。不要为已经发表的视频新建交付任务做测试。
+发布前可运行以下命令：上传素材、选择封面并核对字段，平台可能保存草稿，但绝不点击发表。
+
+```powershell
+uv run --frozen --offline --no-sync sau jobs --media-root C:/Users/Chinese/Videos run --job JOB_ID --prepare-only --headed
+```
+
+结果为 `READY/NOT_SUBMITTED`，浏览器关闭。以后正常运行同一 `JOB_ID` 会重新准备并消耗另一次尝试；重启 CLI 后仍可继续。默认最多 2 次，可明确指定 `--max-attempts 3`（最大 5），只准备也计入预算。后续执行仍需传入相同的 `--media-root`。不要为已经发表的视频新建交付任务做测试。
 
 省略 `--job` 会串行执行当前可用路径，未接入路径保持排队。只准备操作必须指定一个任务。
 
