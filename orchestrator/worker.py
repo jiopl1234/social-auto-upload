@@ -223,6 +223,11 @@ async def run_once(
             if job_id is not None:
                 raise TaskError("UNSUPPORTED", "No task adapter is connected for this platform")
             continue
+        supports = getattr(adapter, "supports", None)
+        if callable(supports) and not supports(candidate["manifest"]):
+            if job_id is not None:
+                raise TaskError("UNSUPPORTED", "Content path is not supported", field="content_type")
+            continue
         submit = getattr(adapter, "submit", None)
         reconcile = getattr(adapter, "reconcile", None)
         full_delivery = callable(submit) and callable(reconcile)

@@ -2,7 +2,7 @@
 
 Tickets 07/09/11 use `orchestrator.platforms.base.BrowserDeliveryAdapter`. Root owns this common implementation and CLI registration. Platform workers own the concrete page ports and platform-specific tests. Tickets 08/10 begin only after 07/09 close.
 
-Each port has `platform`, `content_types: frozenset[str]`, `capability_version: str`, `verification_scope: str` (`unverified` or `local_fixture`) and async methods:
+Each port has `platform`, `content_types: frozenset[str]`, `capability_version: str`, `verification_scope: str` (`unverified`, `local_fixture`, or the explicitly implemented `douyin_video_v1`) and async methods:
 
 ```python
 async def navigate(self, page, content_type: str, *, readonly: bool) -> None: ...
@@ -18,6 +18,10 @@ async def list_works(self, page, content_type: str) -> list[dict]: ...
 ```
 
 The adapter constructor is `BrowserDeliveryAdapter(runtime_dir: Path, port_factory: Callable[[], PagePort], *, session_factory: Callable[[ExecutionContext], BrowserSession] | None = None)`. Each attempt creates its own port and session. A local fixture port must navigate only a file/loopback URL; the shared adapter also guards origin and blocks external network requests. Default unverified production ports return `UNSUPPORTED` before opening a browser. There is no CLI flag to bypass missing production evidence.
+
+The concrete DouyinVideoPort alone may use the fixed Douyin creator origin. Its available scope is original/non-AI video, title/body, immediate public publication and source-frame covers. Other fields fail before browser creation. `can_execute` reports this implemented scope separately from full CLI live-publication acceptance (`production_verified`). The latter remains false until that exact end-to-end path is exercised.
+
+Douyin upload evidence binds the selected source snapshot to CommitUploadInner Vid/VideoMeta and a matching processed preview, and stores the Vid/hash/attempt link before READY. Remote works expose Vid, not source SHA256. Their matching therefore requires the same attempt's saved receipt ID and uploaded Vid, stable author, independently observed title/body, known result and integer-second creation time. Do not copy a source SHA into a remote observation. Missing receipts or fields remain UNKNOWN_COMMIT. Source-frame default cover and empty optional settings are checked in the editor; remote media/cover hashes are not claimed.
 
 Prepare navigates, checks challenge and stable identity, uploads, waits for positive per-file processing evidence, applies and reads fields, rechecks identity/challenge, saves state, then returns the actual seven-field readback. Each operation runs under the existing cumulative stage budget. The adapter's optional `verify_ready(context)` hook rechecks identity/challenge/readback against persisted ready metadata and arms the final control before worker persists SUBMITTING. Submit then invokes exactly one final action; ownership and SUBMITTING persistence remain in worker. Reconciliation navigates read-only and returns independent work observations; no copying job metadata to manufacture evidence. Recovery can open a new session without original media files.
 

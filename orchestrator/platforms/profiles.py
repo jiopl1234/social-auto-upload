@@ -1,7 +1,8 @@
 """Candidate editor selectors recovered from the legacy uploaders.
 
-These locate controls only. No stable-identity, processed-asset or work-detail
-mapping has been verified against a live account, so default ports stay gated.
+The legacy profiles locate controls only and stay gated. Douyin video uses its
+separate observed live implementation; explicitly supplied local fixtures still
+exercise the generic page port.
 """
 from dataclasses import replace
 
@@ -45,6 +46,10 @@ WORK_URLS = {
 def create_port(platform: str, *, evidence: PageEvidence | None = None,
                 selectors: EditorSelectors | None = None, edit_url: str | None = None,
                 works_url: str | None = None, note_selectors: EditorSelectors | None = None) -> DomPagePort:
+    if platform == "douyin" and all(value is None for value in (evidence, selectors, edit_url, works_url, note_selectors)):
+        from orchestrator.platforms.douyin import DouyinVideoPort
+
+        return DouyinVideoPort()
     return DomPagePort(platform, selectors or EDITORS[platform],
                        edit_url=edit_url or EDIT_URLS[platform], works_url=works_url or WORK_URLS[platform],
                        evidence=evidence, note_selectors=note_selectors or NOTE_EDITORS.get(platform),

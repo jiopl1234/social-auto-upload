@@ -18,6 +18,12 @@ def test_capabilities_separate_offline_evidence_from_unverified_production(tmp_p
         assert path["offline_verified"] is True
         assert path["offline_evidence"] == "synthetic_dom_and_task_protocol"
         assert path["production_verified"] is False
+        if (path["platform"], path["content_type"]) == ("douyin", "video"):
+            assert path["can_execute"] is True
+            assert path["status"] == "available_limited"
+            assert path["live_evidence_verified"] is True
+            assert path["missing_evidence"] == ["cli_end_to_end_live_submission"]
+            continue
         assert path["status"] == "restricted"
         assert path["missing_evidence"] == ["stable_account_id", "per_asset_processing", "work_detail_readback"]
 

@@ -51,6 +51,10 @@ class BrowserDeliveryAdapter:
         self.verified_for: str | None = None
         self.cleanup_warnings: list[dict] = []
 
+    def supports(self, manifest: Mapping[str, Any]) -> bool:
+        port = self.port_factory()
+        return port.platform == manifest["platform"] and manifest["content_type"] in port.content_types
+
     async def _open(self, context: ExecutionContext) -> tuple[PagePort, Any]:
         if self.session is not None:
             if self.attempt_id != context.attempt_id or self.port is None:
@@ -59,14 +63,21 @@ class BrowserDeliveryAdapter:
         port = self.port_factory()
         if port.platform != context.manifest["platform"] or context.manifest["content_type"] not in port.content_types:
             raise TaskError("UNSUPPORTED", "Content path is not supported", field="content_type")
-        # Only synthetic local evidence is shipped. Enabling a real site needs
-        # a reviewed evidence implementation, not an environment/CLI switch.
-        if port.verification_scope != "local_fixture":
+        from orchestrator.platforms.douyin import DouyinVideoPort
+
+        live = (type(port) is DouyinVideoPort and port.verification_scope == "douyin_video_v1"
+                and port.edit_url == "https://creator.douyin.com/creator-micro/content/upload")
+        if not live and port.verification_scope != "local_fixture":
             raise TaskError("UNSUPPORTED", "Live account and work evidence has not been verified", field="platform")
         parsed = urlsplit(port.edit_url)
-        if not (parsed.scheme == "file" or (parsed.scheme in {"http", "https"}
+        if not live and not (parsed.scheme == "file" or (parsed.scheme in {"http", "https"}
                 and parsed.hostname in {"127.0.0.1", "localhost", "::1"})):
             raise TaskError("UNSUPPORTED", "Local evidence cannot enable a production origin", field="platform")
+        if live and not str(context.manifest["expected_account_id"]).isdigit():
+            raise TaskError("INVALID_INPUT", "Expected account ID is required", field="expected_id")
+        validator = getattr(port, "validate_scope", None)
+        if callable(validator):
+            validator(context.manifest)
         self.port, self.attempt_id = port, context.attempt_id
         self.submission_started = False
         self.verified_for = None
@@ -82,8 +93,10 @@ class BrowserDeliveryAdapter:
             else:
                 await route.abort()
 
-        await self.page.context.route("**/*", local_only)
-        context.record_runtime({"capability_version": port.capability_version, "evidence_scope": "offline"})
+        if not live:
+            await self.page.context.route("**/*", local_only)
+        context.record_runtime({"capability_version": port.capability_version,
+                                "evidence_scope": "live" if live else "offline"})
         return port, self.page
 
     def _allowed_url(self, url: str) -> bool:
@@ -112,6 +125,9 @@ class BrowserDeliveryAdapter:
         await context.run_stage("metadata", lambda: self._guard(context))
         await context.run_stage("upload", lambda: port.upload(page, context.manifest))
         await context.run_stage("processing", lambda: port.wait_media(page, context.manifest))
+        media_observation = getattr(port, "media_observation", None)
+        if isinstance(media_observation, dict):
+            context.store.record_video_upload(context.job_id, context.lease.token, **media_observation)
         await context.run_stage("metadata", lambda: self._guard(context))
         await context.run_stage("metadata", lambda: port.apply_fields(page, context.manifest))
         actual = await context.run_stage("metadata", lambda: port.readback(page))
@@ -143,6 +159,9 @@ class BrowserDeliveryAdapter:
         try:
             return await port.submit_once(self.page)
         finally:
+            receipt = getattr(port, "observed_receipt", None)
+            if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str):
+                context.store.record_receipt(context.job_id, context.lease.token, receipt["content_id"])
             observer = getattr(port, "receipt_task", None)
             if isinstance(observer, asyncio.Task):
                 context.budget.track(observer)
@@ -167,3 +186,24 @@ class BrowserDeliveryAdapter:
                 # A failed close remains owned by this adapter and by the lease.
                 if not self.cleanup_warnings:
                     self.session, self.page, self.port = None, None, None
+
+
+class PreparationOnlyAdapter:
+    """Explicit CLI preparation, with no submission or reconciliation methods."""
+    def __init__(self, adapter: BrowserDeliveryAdapter):
+        self.adapter = adapter
+
+    @property
+    def cleanup_warnings(self) -> list[dict]:
+        return self.adapter.cleanup_warnings
+
+    def supports(self, manifest: Mapping[str, Any]) -> bool:
+        return self.adapter.supports(manifest)
+
+    async def prepare(self, context: ExecutionContext) -> dict:
+        actual = await self.adapter.prepare(context)
+        checked, _ = validate_prepared(context.manifest, actual)
+        return checked
+
+    async def close(self) -> None:
+        await self.adapter.close()

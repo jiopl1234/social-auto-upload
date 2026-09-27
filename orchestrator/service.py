@@ -79,6 +79,12 @@ class TaskService:
     def status(self, job_id: str) -> dict:
         return self.store.get(job_id)
 
+    def resume(self, job_id: str) -> dict:
+        job = self.store.get(job_id)
+        with self.maintenance(job["platform"], job["account"]) as lease:
+            lease.assert_owner()
+            return self.store.resume_preparation(job_id)
+
     def list_jobs(self) -> list[dict]:
         return self.store.list_jobs()
 
@@ -151,6 +157,11 @@ class TaskService:
         from orchestrator.platforms import capability_report
 
         return capability_report()
+
+    async def inspect_work(self, platform: str, account: str, content_id: str, *, headed: bool = False) -> dict:
+        from orchestrator.inspection import inspect_work
+
+        return await inspect_work(self, platform, account, content_id, headed=headed)
 
     def maintenance(self, platform: str, account: str):
         from orchestrator.ownership import AccountLease

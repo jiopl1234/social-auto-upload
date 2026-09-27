@@ -30,12 +30,12 @@ def write_manifest(directory, **overrides):
     return path
 
 
-def bind_local_account(db):
+def bind_local_account(db, platform="douyin"):
     source = db.parent / "source.json"
     source.write_text('{"cookies":[],"origins":[]}', encoding="utf-8")
     completed, account = run_jobs(
-        db, "bind-account", "--platform", "douyin", "--account", "creator",
-        "--expected-id", "douyin:creator", "--session-source", source,
+        db, "bind-account", "--platform", platform, "--account", "creator",
+        "--expected-id", f"{platform}:creator", "--session-source", source,
     )
     assert completed.returncode == 0, account
 
@@ -144,11 +144,11 @@ def test_errors_are_json_and_unconnected_execution_does_not_publish(tmp_path):
     completed, missing = run_jobs(db, "status", "missing")
     assert completed.returncode == 3
     assert missing["error"]["code"] == "NOT_FOUND"
-    bind_local_account(db)
+    bind_local_account(db, "tencent")
     completed, invalid = run_jobs(db, "enqueue")
     assert completed.returncode == 2
     assert invalid["error"]["code"] == "INVALID_INPUT"
-    manifest = write_manifest(tmp_path)
+    manifest = write_manifest(tmp_path, platform="tencent")
     _, queued = run_jobs(db, "enqueue", "--manifest", manifest)
     completed, unsupported = run_jobs(db, "run", "--job", queued["job_id"])
     assert completed.returncode == 5

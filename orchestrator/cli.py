@@ -22,9 +22,15 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     actions.add_parser("batch-status", help="Query every target in a batch").add_argument("batch_id")
     for action in ("status", "events", "attempts"):
         actions.add_parser(action).add_argument("job_id")
+    actions.add_parser("resume", help="Resume an unsubmitted blocked job after rebinding its session").add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
     actions.add_parser("accounts", help="Query account status and pause reasons")
     actions.add_parser("capabilities", help="Query per-path offline and production verification status")
+    inspect = actions.add_parser("inspect-work", help="Read one existing Douyin video without publishing")
+    inspect.add_argument("--platform", dest="account_platform", choices=["douyin"], required=True)
+    inspect.add_argument("--account", required=True)
+    inspect.add_argument("--content-id", required=True)
+    inspect.add_argument("--headed", action="store_true")
     actions.add_parser("prune-evidence", help="Remove managed diagnostic artifacts older than 30 days")
     bind = actions.add_parser("bind-account", help="Bind one local account to a managed session")
     bind.add_argument("--platform", dest="account_platform", required=True)
@@ -33,6 +39,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     bind.add_argument("--session-source", type=Path, required=True)
     run = actions.add_parser("run", help="Execute queued tasks when an adapter is available")
     run.add_argument("--job", dest="job_id")
+    run.add_argument("--headed", action="store_true", help="Show the task browser")
+    run.add_argument("--prepare-only", action="store_true", help="Check and prepare one job without publishing")
+    run.add_argument("--max-attempts", type=int, choices=range(1, 6), default=2)
 
 
 def emit_error(error: TaskError) -> int:
@@ -56,6 +65,8 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = service.batch_status(args.batch_id)
         elif args.action == "status":
             result = service.status(args.job_id)
+        elif args.action == "resume":
+            result = service.resume(args.job_id)
         elif args.action == "events":
             result = {"job_id": args.job_id, "events": service.events(args.job_id)}
         elif args.action == "attempts":
@@ -66,6 +77,8 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = {"accounts": service.accounts()}
         elif args.action == "capabilities":
             result = {"capabilities": service.capabilities()}
+        elif args.action == "inspect-work":
+            result = await service.inspect_work(args.account_platform, args.account, args.content_id, headed=args.headed)
         elif args.action == "prune-evidence":
             result = {"removed": service.prune_evidence(), "retention_days": 30}
         elif args.action == "bind-account":
@@ -73,12 +86,16 @@ async def dispatch(args: argparse.Namespace) -> int:
         elif args.action == "run":
             from orchestrator.platforms import default_adapters
 
+            if args.prepare_only and not args.job_id:
+                raise TaskError("INVALID_INPUT", "Preparation requires one explicit job", field="action")
             selected = service.status(args.job_id) if args.job_id else None
+            if args.prepare_only and selected is not None and selected["submission"] != "NOT_SUBMITTED":
+                raise TaskError("INVALID_STATE", "Preparation cannot resume a submitted task")
             if selected is not None:
                 # Let the worker decide whether this call needs an adapter;
                 # finished, non-retryable and future jobs are read-only.
                 try:
-                    idle = await service.run_once(adapters={}, job_id=args.job_id)
+                    idle = await service.run_once(adapters={}, job_id=args.job_id, max_attempts=args.max_attempts)
                 except TaskError as exc:
                     if exc.code != "UNSUPPORTED":
                         raise
@@ -89,11 +106,13 @@ async def dispatch(args: argparse.Namespace) -> int:
             if selected is not None:
                 paths = [item for item in paths if item["platform"] == selected["platform"]
                          and item["content_type"] == selected["manifest"]["content_type"]]
-            if not paths or not all(item["production_verified"] for item in paths):
+            enabled = [item for item in paths if item.get("can_execute", item["production_verified"])]
+            if not enabled:
                 raise TaskError("UNSUPPORTED", "Live account and work evidence is not verified; inspect jobs capabilities")
-            adapters = default_adapters(service.runtime_dir)
-            result = (await service.run_once(adapters=adapters, job_id=args.job_id) if args.job_id
-                      else {"jobs": await service.run_pending(adapters=adapters)})
+            all_adapters = default_adapters(service.runtime_dir, headed=args.headed, prepare_only=args.prepare_only)
+            adapters = {item["platform"]: all_adapters[item["platform"]] for item in enabled}
+            result = (await service.run_once(adapters=adapters, job_id=args.job_id, max_attempts=args.max_attempts) if args.job_id
+                      else {"jobs": await service.run_pending(adapters=adapters, max_attempts=args.max_attempts)})
         else:
             raise TaskError("INVALID_INPUT", "Unknown task action", field="action")
         print(json.dumps(sanitize_public_result(result), ensure_ascii=False, allow_nan=False))

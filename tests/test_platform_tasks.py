@@ -120,7 +120,7 @@ def test_unverified_live_video_paths_stop_before_browser_or_submission(tmp_path)
 
     service = make_service(tmp_path)
     report = capability_report()
-    for platform in ("douyin", "xiaohongshu", "tencent"):
+    for platform in ("xiaohongshu", "tencent"):
         capability = next(item for item in report if item["platform"] == platform and item["content_type"] == "video")
         assert capability["production_verified"] is False
         assert capability["status"] == "restricted"

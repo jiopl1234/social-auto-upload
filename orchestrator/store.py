@@ -785,6 +785,42 @@ class Store:
                                (job_id, job["attempt_id"], now))
             return self._job_from_row(self._job_row(connection, job_id))
 
+    def resume_preparation(self, job_id: str) -> dict:
+        """Caller holds AccountLease; only a definitely-unsubmitted pause resumes."""
+        with self.transaction() as connection:
+            job = self._job_row(connection, job_id)
+            account = connection.execute("SELECT status FROM accounts WHERE platform = ? AND account = ?",
+                                         (job["platform"], job["account"])).fetchone()
+            if (job["status"] != "BLOCKED" or job["submission"] != "NOT_SUBMITTED"
+                    or account is None or account["status"] != "READY"):
+                raise TaskError("INVALID_STATE", "Task state does not allow this action")
+            now = self._utc_now()
+            connection.execute("UPDATE jobs SET status = 'QUEUED', error_json = NULL, updated_at = ? WHERE job_id = ?",
+                               (now, job_id))
+            connection.execute("INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) "
+                               "VALUES (?, ?, 'QUEUED', 'recover', ?, '{}')", (job_id, job["attempt_id"], now))
+            return self._job_from_row(self._job_row(connection, job_id))
+
+    def record_video_upload(self, job_id: str, owner_token: str, *, video_id: str, sha256: str) -> None:
+        """Persist the observed upload ID before the durable submit boundary."""
+        if (not isinstance(video_id, str) or not video_id or len(video_id) > 128
+                or not all(char.isalnum() or char in "_-" for char in video_id)):
+            raise TaskError("INVALID_RESULT", "Uploaded video identity is invalid", field="media")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            manifest = json.loads(job["manifest_json"])
+            if (job["status"] != "PREPARING" or job["submission"] != "NOT_SUBMITTED"
+                    or job["platform"] != "douyin" or manifest["content_type"] != "video"
+                    or len(manifest["media"]) != 1 or sha256 != manifest["media"][0]["sha256"]):
+                raise TaskError("INVALID_STATE", "Upload evidence does not belong to this preparation")
+            evidence = [item for item in json.loads(job["evidence_json"])
+                        if item.get("kind") != "uploaded_video"]
+            evidence.append({"kind": "uploaded_video", "video_id": video_id, "sha256": sha256,
+                             "attempt_id": job["attempt_id"]})
+            connection.execute("UPDATE jobs SET evidence_json = ? WHERE job_id = ?",
+                               (_canonical_json(evidence), job_id))
+
     def record_receipt(self, job_id: str, owner_token: str, content_id: str) -> None:
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
