@@ -25,3 +25,5 @@
 **实施与验收:** `f4d9f76`、`da9bb22`。最终完整测试 236 项与 20 项子测试通过，所选范围类型检查 0 错误、0 警告；Standards / Spec 独立复审均无未关闭项。验证记录：`docs/audit/ticket-06-12-13-validation.md`；审查记录：`docs/audit/ticket-06-12-13-review.md`。本地浏览器、预检子进程、真实 SQLite、定时与批次恢复均已验证；真实账号发布未验证。数据库 schema v3 防止旧 v2 worker 忽略计划时间；平台预约仍 UNSUPPORTED。
 
 2026-09-27 审查补修：`ed915a4` 将会话读取移入受预算监控、可终止的子进程，浏览器接收内存快照；`run_pending` 在持久化取消错误或警告后停止领取。`9b16bed` 补足任务交接时的待决取消检查，第二项保持 QUEUED 且无 attempt，显式重新调用可继续执行。完整验收 366 项与 20 项子测试通过，最后补修的 99 项影响范围回归通过，类型检查零错误，两轴复审无未关闭项。详见 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md)。
+
+同日后续复审发现 NOT_DUE 延期会清空清理期间的取消警告，前述回归未覆盖此组合。`8a12e9e` 在延期和尝试耗尽两个分支保留该警告及调度事件；取消后第二项无 attempt、零提交，显式恢复仍可继续。新的干净环境完整验收 369 项测试与 20 项子测试通过，Pyright 零错误，两轴独立复审无新发现。证据见 [定时延期取消修复](C:/Users/Chinese/social-auto-upload/docs/audit/deferred-cancellation-fix-2026-09-27.md)。

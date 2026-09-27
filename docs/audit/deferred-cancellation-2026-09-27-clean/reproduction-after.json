@@ -1,0 +1,23 @@
+{
+  "source_commit": "8a12e9ef5a36add341d3e338a7010170be74469d",
+  "observed": {
+    "statuses": [
+      "QUEUED"
+    ],
+    "errors": [
+      null
+    ],
+    "warnings": [
+      [
+        {
+          "code": "CANCELLED",
+          "message": "Task execution was cancelled",
+          "field": null
+        }
+      ]
+    ],
+    "writes_after_cancel": [],
+    "second_attempts": 0,
+    "runner_cancelled": false
+  }
+}

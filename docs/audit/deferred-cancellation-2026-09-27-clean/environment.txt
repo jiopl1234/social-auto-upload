@@ -1,0 +1,11 @@
+source_commit=8a12e9ef5a36add341d3e338a7010170be74469d
+source_path=C:\Users\Chinese\AppData\Local\Temp\sau-deferred-cancel-2c064831db1244b2932bed3e7ac9d361\source
+venv_path=C:\Users\Chinese\AppData\Local\Temp\sau-deferred-cancel-2c064831db1244b2932bed3e7ac9d361\venv
+sync=uv sync --frozen --offline --group dev
+runtime=isolated temporary directory; local fixtures only
+chrome_version=152.0.7977.83
+3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+patchright=1.58.2
+pytest=9.1.1
+pytest-timeout=2.4.0
+pyright=1.1.414

@@ -22,7 +22,7 @@ Tracker: local Markdown
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | done |
 | 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | done |
 
-当前 frontier：无。01–15 全部完成。最近一次干净环境全套验收为 366 项测试与 20 项子测试通过、0 skipped；之后的取消交接边界补修通过 99 项影响范围回归。两次核心与 CLI 类型检查均为 0 errors。
+当前 frontier：无，01–15 及后续补充修复完成。`8a12e9e` 修复 NOT_DUE 清理取消信号丢失，干净环境完整验收为 369 项测试与 20 项子测试通过、0 skipped；Pyright 零错误，独立 Standards / Spec 复审均无新发现。详见 [定时延期取消修复](C:/Users/Chinese/social-auto-upload/docs/audit/deferred-cancellation-fix-2026-09-27.md)。此前 366 项全套与 99 项影响范围结果保留为历史证据。
 
 2026-09-27 补充审查已关闭：基线 0012d2c...064f7ff 发现的取消、提交后挑战、重复入队与会话读取四类问题均已修复，复审补充的取消交接边界也已修复。代码提交 ed915a4、9b16bed；Standards / Spec 均无未关闭项。历史 342 项结果保留为当时基线；各次提交与测试范围见 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md)。
 
