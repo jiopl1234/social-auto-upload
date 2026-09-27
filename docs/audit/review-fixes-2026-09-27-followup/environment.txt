@@ -1,0 +1,6 @@
+source_commit=9b16beda3b0b0a7ea6642ef8bbdd98684c2cc9d4
+source_path=C:\Users\Chinese\AppData\Local\Temp\sau-review-followup-05781aae7a7d482099a99d73470308f5\source
+venv_path=C:\Users\Chinese\AppData\Local\Temp\sau-review-followup-05781aae7a7d482099a99d73470308f5\venv
+scope=runtime_limits,scheduling,fanout,job_delivery,job_worker,release_acceptance
+sync=uv sync --frozen --offline --group dev
+chrome_version=152.0.7977.83

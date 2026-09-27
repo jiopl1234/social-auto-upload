@@ -22,9 +22,9 @@ Tracker: local Markdown
 | 14 | [按任务追踪失败证据，同时保护凭据和会话](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/14-safe-diagnostics-and-session-storage.md) | done |
 | 15 | [五条发布路径通过共同验收，并明确生产验证状态](C:/Users/Chinese/social-auto-upload/.scratch/unattended-publishing/issues/15-five-path-release-acceptance.md) | done |
 
-当前 frontier：无。01–15 全部完成；干净环境统一验收为 342 项测试与 20 项子测试通过、0 skipped，核心与 CLI 类型检查为 0 errors。
+当前 frontier：无。01–15 全部完成。最近一次干净环境全套验收为 366 项测试与 20 项子测试通过、0 skipped；之后的取消交接边界补修通过 99 项影响范围回归。两次核心与 CLI 类型检查均为 0 errors。
 
-2026-09-27 补充审查：基线 0012d2c...064f7ff 发现的取消、提交后挑战、重复入队与会话读取四类问题正在修复和复验。历史票完成记录及上述 342 项结果保留为当时基线；新结果以 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md) 为准。
+2026-09-27 补充审查已关闭：基线 0012d2c...064f7ff 发现的取消、提交后挑战、重复入队与会话读取四类问题均已修复，复审补充的取消交接边界也已修复。代码提交 ed915a4、9b16bed；Standards / Spec 均无未关闭项。历史 342 项结果保留为当时基线；各次提交与测试范围见 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md)。
 
 最终证据：[五路径联合验收](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-validation.md)、[独立双轴审查](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-review.md)。五路径均已通过本地任务协议与合成页面验证；真实平台账号身份、逐素材状态和作品读回没有实测证据，生产执行保持 restricted。
 

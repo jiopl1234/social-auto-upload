@@ -21,3 +21,5 @@
 ## 完成记录
 
 实现提交：de4a80e、81579c2、62a6c7a。独立 Standards / Spec 复审均无未关闭发现。全套离线验证 286 passed、20 subtests passed；改动核心及所选测试 Pyright 为 0 errors。详见 docs/audit/ticket-07-09-11-14-validation.md 和 ticket-07-09-11-14-review.md。真实平台证据仍未验证，默认发布受限；未访问真实账号或执行真实发布。
+
+2026-09-27 审查补修：`ed915a4` 在提交后的回执等待期间及只读导航前检查验证提示，挑战与回执同时出现也暂停账号。提交已可能发生时保留 UNKNOWN_COMMIT，不清除提示后继续发表；观察任务无法停止时保留资源阻断。五条共享发布路径均有本地回归，平台/图文/联合验收 73 项通过；完整验收 366 项与 20 项子测试通过，两轴复审无未关闭项。详见 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md)，生产状态仍 restricted。

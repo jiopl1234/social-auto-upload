@@ -1,0 +1,11 @@
+source_commit=ed915a4f41f361f2f14cc75daa714ddd8951c2dc
+source_path=C:\Users\Chinese\AppData\Local\Temp\sau-review-fixes-dfdfc9a069d84f8ca0545c1974677cfc\source
+venv_path=C:\Users\Chinese\AppData\Local\Temp\sau-review-fixes-dfdfc9a069d84f8ca0545c1974677cfc\venv
+sync=uv sync --frozen --offline --group dev
+runtime=temporary isolated directory; only local browser fixture pages
+chrome_version=152.0.7977.83
+3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]
+patchright=1.58.2
+pytest=9.1.1
+pytest-timeout=2.4.0
+pyright=1.1.414

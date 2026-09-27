@@ -22,3 +22,5 @@
 2026-09-26，实现提交 `d3974a8`、`251578b`。全套 57 测试及 20 子测试通过；定向 Pyright 0 错误、0 警告；四进程首次初始化竞争已修复并重复验证。Standards 无发现，Spec 的机器帮助 P3 已修复复核，未解决项为 0。
 
 证据：[验证](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-02-validation.md)、[审查](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-02-review.md)、[公共接口说明](C:/Users/Chinese/social-auto-upload/docs/tasks.md)。后续票继续接入执行、内容预检和提交恢复，入队不表示发布。
+
+2026-09-27 审查补修：`ed915a4` 在素材校验前比对持久化原始请求，schema v4 同事务保存请求指纹。原素材移走或发生变化时，相同请求仍返回原 job；不同请求返回 CONFLICT；执行仍校验原素材快照。旧数据库迁移与缺失素材/封面/会话的重放回归通过，历史路径别名限制已记录。完整验收 366 项与 20 项子测试通过，独立两轴复审无未关闭项。详见 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md)。
