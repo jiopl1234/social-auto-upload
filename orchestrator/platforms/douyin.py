@@ -46,6 +46,7 @@ class DouyinVideoPort(DomPagePort):
         self.media_ready = False
         self.saved_covers: list[str] | None = None
         self.in_cover_editor = False
+        self.collection_tip_dismissed = False
         self.observed_receipt: dict | None = None
         self.receipt_failed = False
         self.works: list[dict] | None = None
@@ -136,7 +137,27 @@ class DouyinVideoPort(DomPagePort):
         for text in ("实名验证", "短信验证", "扫码登录", "安全验证", "接收短信验证码", "为保障账号安全"):
             if await page.get_by_text(text, exact=False).first.is_visible():
                 raise TaskError("AUTH_REQUIRED", "Account verification or login is required")
-        if not self.in_cover_editor and await page.locator('[role="dialog"]:visible').count():
+        dialogs = page.locator('[role="dialog"]:visible')
+        if not self.in_cover_editor and await dialogs.count():
+            # This exact informational tip was observed on the work-list page.
+            # Acknowledging it cannot alter a work or answer an auth challenge.
+            if (not self.collection_tip_dismissed and await dialogs.count() == 1
+                    and urlsplit(page.url)[:3] == urlsplit(self.works_url)[:3]
+                    and "".join((await dialogs.inner_text()).split()) == "合集管理移到这里啦知道了"
+                    and await dialogs.get_by_role("button").count() == 1):
+                button = dialogs.get_by_role("button", name="知道了", exact=True)
+                if await button.count() == 1:
+                    self.collection_tip_dismissed = True
+                    tip = dialogs.filter(has_text="合集管理移到这里啦")
+                    try:
+                        await button.click(timeout=3000)
+                        await tip.wait_for(state="hidden", timeout=3000)
+                    except Exception:
+                        # A new challenge can replace or cover the original
+                        # tip. Classify it even when dismissal cannot finish.
+                        await self.check_challenge(page)
+                        raise
+                    return await self.check_challenge(page)
             raise TaskError("UI_CHANGED", "An unrecognized dialog blocks editing")
 
     @staticmethod
@@ -174,6 +195,7 @@ class DouyinVideoPort(DomPagePort):
                     raise TaskError("UPLOAD_FAILED", "One or more media files failed processing", field="media")
                 if await self._preview_ready(page):
                     self.media_ready = True
+                    self.uploading = False
                     return
             await asyncio.sleep(0.1)
 
@@ -194,6 +216,27 @@ class DouyinVideoPort(DomPagePort):
             return {"video_id": self.commit["Vid"], "sha256": self.asset["sha256"]}
         return None
 
+    async def _restore_video_preview(self, page: Any) -> None:
+        if await page.locator("video").count():
+            return
+        # Saving a cover switches the editor to its cover/title preview tab.
+        # Reopen the observed video tab so final validation reads a live media
+        # element again, rather than relying on the old processing flag.
+        tab = page.get_by_text("预览视频", exact=True)
+        if await tab.count() != 1 or not await tab.is_visible():
+            raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="media")
+        await tab.click(timeout=5000)
+
+        async def wait_ready() -> None:
+            while not await self._preview_ready(page):
+                await self.check_challenge(page)
+                await asyncio.sleep(.1)
+
+        try:
+            await asyncio.wait_for(wait_ready(), timeout=5)
+        except asyncio.TimeoutError:
+            raise TaskError("UPLOAD_FAILED", "Media is no longer ready", field="media") from None
+
     async def _select_covers(self, page: Any) -> None:
         await self.check_challenge(page)
         await page.get_by_text("选择封面", exact=True).first.click(timeout=5000)
@@ -203,42 +246,68 @@ class DouyinVideoPort(DomPagePort):
             await dialog.wait_for(state="visible", timeout=5000)
             if not await dialog.get_by_text("设置竖封面", exact=True).count():
                 raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="cover")
-            await dialog.locator('[class^="preview-frame-"]').first.click(timeout=5000)
+            # The selected source-frame handle overlays the thumbnail strip;
+            # click its real hit target, never force-click through the handle.
+            frame = dialog.locator('[class^="slider-preview-"]')
+            if await frame.count() != 1:
+                raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="cover")
+            await frame.click(timeout=5000)
             await dialog.get_by_role("button", name="设置横封面", exact=True).click(timeout=5000)
             await self.check_challenge(page)
-            await dialog.locator('[class^="preview-frame-"]').first.click(timeout=5000)
+            await frame.click(timeout=5000)
             await dialog.get_by_role("button", name="完成", exact=True).click(timeout=5000)
             await dialog.wait_for(state="hidden", timeout=5000)
         finally:
             self.in_cover_editor = False
-        self.saved_covers = await self._cover_observation(page)
+        self.saved_covers = await self._cover_observation(page, wait_for_upload=True)
 
-    async def _cover_observation(self, page: Any) -> list[str]:
+    async def _cover_observation(self, page: Any, *, wait_for_upload: bool = False) -> list[str]:
         # Anchor each image to its visible editor label. Never infer a saved
         # cover from a dismissed dialog; keep source identities only in memory.
-        observed = []
-        for label in ("竖封面3:4", "横封面4:3"):
-            control = page.get_by_text(label, exact=True)
-            if await control.count() != 1 or not await control.is_visible():
-                raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="cover")
-            source = await control.evaluate("""async el => {
-                for(let node=el.parentElement; node && node !== document.body; node=node.parentElement) {
-                    if(node.textContent.includes('竖封面3:4') && node.textContent.includes('横封面4:3')) break;
-                    const images=[...node.querySelectorAll('img')].filter(img=>img.getClientRects().length);
-                    if(images.length) {
-                        const img=images[0];
-                        if(images.length!==1) return null;
-                        try { await img.decode(); } catch { return null; }
-                        return images.length===1 && img.complete && img.naturalWidth>0 && img.naturalHeight>0
-                            ? img.currentSrc || img.src : null;
+        while True:
+            check = await self._control(page, '.cover-check', 'cover')
+            if not (await check.inner_text()).startswith('封面检测通过'):
+                if not wait_for_upload:
+                    raise TaskError("METADATA_MISMATCH", "Cover validation is no longer ready", field="cover")
+                await asyncio.sleep(.1)
+                continue
+            observed = []
+            pending = False
+            for label, ratio_width, ratio_height in (("竖封面3:4", 3, 4), ("横封面4:3", 4, 3)):
+                control = page.get_by_text(label, exact=True)
+                if await control.count() != 1 or not await control.is_visible():
+                    raise TaskError("UI_CHANGED", "Required page control is missing or ambiguous", field="cover")
+                details = await control.evaluate("""async el => {
+                    for(let node=el.parentElement; node && node !== document.body; node=node.parentElement) {
+                        if(node.textContent.includes('竖封面3:4') && node.textContent.includes('横封面4:3')) break;
+                        const images=[...node.querySelectorAll('img')].filter(img=>img.getClientRects().length);
+                        if(images.length) {
+                            const img=images[0];
+                            if(images.length!==1) return null;
+                            try { await img.decode(); } catch { return null; }
+                            return img.complete && img.naturalWidth>0 && img.naturalHeight>0
+                                ? {source:img.currentSrc || img.src,width:img.naturalWidth,height:img.naturalHeight} : null;
+                        }
                     }
-                }
-                return null;
-            }""")
-            if not isinstance(source, str) or not source:
-                raise TaskError("METADATA_MISMATCH", "Saved cover is not ready", field="cover")
-            observed.append(hashlib.sha256(source.encode()).hexdigest())
-        return observed
+                    return null;
+                }""")
+                if not isinstance(details, dict) or not details.get('source'):
+                    raise TaskError("METADATA_MISMATCH", "Saved cover is not ready", field="cover")
+                source = details['source']
+                scheme = urlsplit(source).scheme
+                # The editor first shows the uncropped video poster, then
+                # installs the uploaded crops. Allow one pixel of rounding.
+                cropped = abs(details['width'] * ratio_height - details['height'] * ratio_width) <= max(ratio_width, ratio_height)
+                if scheme not in {"https", "http"} or not cropped:
+                    if wait_for_upload and scheme in {"https", "http", "blob", "data"}:
+                        pending = True
+                        break
+                    raise TaskError("METADATA_MISMATCH", "Saved cover upload is not complete", field="cover")
+                observed.append(hashlib.sha256(source.encode()).hexdigest())
+            if not pending:
+                return observed
+            await self.check_challenge(page)
+            await asyncio.sleep(.1)
 
     async def _settings(self, page: Any) -> None:
         for name in ("公开", "立即发布"):
@@ -260,13 +329,29 @@ class DouyinVideoPort(DomPagePort):
     async def readback(self, page: Any) -> dict:
         await self.check_challenge(page)
         await self._settings(page)
+        await self._restore_video_preview(page)
         if not self.media_ready or self.asset is None or not await self._preview_ready(page):
             raise TaskError("UPLOAD_FAILED", "Media is no longer ready", field="media")
         if self.saved_covers is None or await self._cover_observation(page) != self.saved_covers:
             raise TaskError("METADATA_MISMATCH", "Saved cover changed before submission", field="cover")
         title = await self._control(page, self.selectors.title, "title")
         body = await self._control(page, self.selectors.body, "body")
-        return {"title": await title.input_value(), "body": await body.inner_text(), "tags": [],
+        actual_body = await body.evaluate(r"""root => {
+            const lines=[...root.children];
+            if(!lines.length || [...root.childNodes].some(n=>n.nodeType===3 && n.textContent)
+                || !lines.every(line=>line.matches('.ace-line[data-node="true"]')
+                    && line.children.length===1 && line.firstElementChild.matches('[data-line-wrapper="true"]')))
+                return root.innerText;
+            return lines.map(line=>{
+                const copy=line.firstElementChild.cloneNode(true);
+                // The editor inserts this explicitly marked cursor sentinel.
+                // Preserve user-authored zero-width characters and line breaks.
+                for(const marker of copy.querySelectorAll('[data-string="true"][data-enter="true"]'))
+                    if(!marker.childElementCount && marker.textContent==='\u200b') marker.remove();
+                return copy.textContent;
+            }).join('\n');
+        }""")
+        return {"title": await title.input_value(), "body": actual_body, "tags": [],
                 "media": [{"kind": "video", "sha256": self.asset["sha256"]}],
                 "cover": None, "collection": None, "declarations": {}}
 

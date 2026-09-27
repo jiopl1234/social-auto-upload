@@ -42,12 +42,13 @@ def test_receipted_douyin_work_uses_independent_fields_without_inventing_source_
     assert service.attempts(job["job_id"])[0]["submit_count"] == 1
 
 
-def test_real_port_delivers_once_through_browser_and_durable_task_protocol(tmp_path):
+@pytest.mark.parametrize("mode", ["normal", "preview-tabs"])
+def test_real_port_delivers_once_through_browser_and_durable_task_protocol(tmp_path, mode):
     from tests.douyin_fixture import DouyinSite
 
     service = make_service(tmp_path)
     job = service.enqueue(make_manifest(tmp_path))
-    with DouyinSite() as site:
+    with DouyinSite(mode) as site:
         result = asyncio.run(service.run_once(adapters={"douyin": site.adapter(service)}, job_id=job["job_id"],
             limits={"total": 25, "cleanup": 4, "processing": 3, "submit": 2}))
         assert result is not None
@@ -87,6 +88,37 @@ def test_prepare_only_checks_live_controls_without_crossing_submission_boundary(
         assert [attempt["submit_count"] for attempt in restarted.attempts(job["job_id"])] == [0, 1]
 
 
+@pytest.mark.parametrize('mode', ['pending-covers', 'uncropped-covers'])
+def test_unfinished_cover_upload_cannot_be_reported_ready(tmp_path, mode):
+    from orchestrator.platforms.base import PreparationOnlyAdapter
+    from tests.douyin_fixture import DouyinSite
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+    with DouyinSite(mode) as site:
+        result = asyncio.run(service.run_once(adapters={'douyin': PreparationOnlyAdapter(site.adapter(service))},
+            job_id=job['job_id'], limits={'metadata': 2}))
+        assert result is not None and result['status'] == 'FAILED_PRE_SUBMIT'
+        assert result['error']['code'] == 'TIMEOUT'
+        assert result['submission'] == 'NOT_SUBMITTED'
+        assert site.submissions == []
+
+
+@pytest.mark.parametrize('body', ['第一行\n\n第二行', '正文\u200b保留字符'])
+def test_editor_markers_are_excluded_but_original_text_is_preserved(tmp_path, body):
+    from orchestrator.platforms.base import PreparationOnlyAdapter
+    from tests.douyin_fixture import DouyinSite
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, body=body))
+    with DouyinSite('rich-editor') as site:
+        result = asyncio.run(service.run_once(adapters={'douyin': PreparationOnlyAdapter(site.adapter(service))},
+            job_id=job['job_id']))
+        assert result is not None and result['status'] == 'READY', result
+        assert result['actual_metadata']['body'] == body
+        assert site.submissions == []
+
+
 @pytest.mark.parametrize("mode,status,code", [
     ("wrong-account", "BLOCKED", "IDENTITY_MISMATCH"),
     ("processing", "FAILED_PRE_SUBMIT", "TIMEOUT"),
@@ -98,6 +130,7 @@ def test_prepare_only_checks_live_controls_without_crossing_submission_boundary(
     ("worklist-auth", "UNKNOWN_COMMIT", "AUTH_REQUIRED"),
     ("removed-cover-after-ready", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
     ("changed-cover-after-ready", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
+    ("failed-cover-check-after-ready", "FAILED_PRE_SUBMIT", "METADATA_MISMATCH"),
 ])
 def test_real_port_failure_preserves_submission_and_account_state(tmp_path, mode, status, code):
     from tests.douyin_fixture import DouyinSite
@@ -156,23 +189,38 @@ def test_saved_receipt_recovers_after_restart_without_source_media(tmp_path):
         assert len(site.submissions) == 1
 
 
-def test_readonly_inspection_never_creates_a_delivery(tmp_path):
+@pytest.mark.parametrize("mode", ["normal", "collection-tip", "unknown-tip",
+                                 "collection-tip-auth", "collection-tip-retained-auth"])
+def test_readonly_inspection_never_creates_a_delivery(tmp_path, mode):
     from orchestrator.browser import BrowserSession
     from orchestrator.inspection import inspect_work
     from orchestrator.platforms.douyin import DouyinVideoPort
     from tests.douyin_fixture import DouyinSite
     from tests.test_browser_lifecycle import _installed_chromium_executable
+    from orchestrator.errors import TaskError
 
     service = make_service(tmp_path)
-    with DouyinSite() as site:
+    with DouyinSite(mode) as site:
         class Port(DouyinVideoPort):
             origin = site.origin
             upload_origin = site.origin
-        result = asyncio.run(inspect_work(service, "douyin", "creator", "7690181573743742254", port_factory=Port,
+        operation = inspect_work(service, "douyin", "creator", "7690181573743742254", port_factory=Port,
             session_factory=lambda c: BrowserSession(c, launch_options={"headless": True,
-                "executable_path": str(_installed_chromium_executable())})))
-        assert result["status"] == "NOT_FOUND"
-        assert service.list_jobs() == []
+                "executable_path": str(_installed_chromium_executable())}))
+        if mode in {"unknown-tip", "collection-tip-auth", "collection-tip-retained-auth"}:
+            with pytest.raises(TaskError) as caught:
+                asyncio.run(operation)
+            assert caught.value.code == ("UI_CHANGED" if mode == "unknown-tip" else "AUTH_REQUIRED")
+            if mode != "unknown-tip":
+                next_job = service.enqueue(make_manifest(tmp_path))
+                result = asyncio.run(service.run_once(adapters={"douyin": site.adapter(service)}, job_id=next_job["job_id"]))
+                assert result is not None and result["status"] == "QUEUED"
+                assert service.attempts(next_job["job_id"]) == []
+        else:
+            result = asyncio.run(operation)
+            assert result["status"] == "NOT_FOUND"
+        if mode not in {"collection-tip-auth", "collection-tip-retained-auth"}:
+            assert service.list_jobs() == []
         assert site.submissions == []
 
 

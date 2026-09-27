@@ -4,6 +4,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
+import struct
+import zlib
 from urllib.parse import urlsplit
 
 from orchestrator.browser import BrowserSession
@@ -11,14 +13,21 @@ from orchestrator.platforms.base import BrowserDeliveryAdapter
 from tests.test_browser_lifecycle import _installed_chromium_executable
 
 
-HTML = """<!doctype html><meta charset="utf-8"><body>
+def cover_png(width, height):
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', zlib.compress((b'\0' + b'\x80' * (3 * width)) * height)) + chunk(b'IEND', b''))
+
+
+HTML = r"""<!doctype html><meta charset="utf-8"><body>
 <input type=file accept="video/mp4" id=upload>
 <section id=editor hidden>
 <input placeholder="填写作品标题，为作品获得更多流量" maxlength=30>
 <div class="zone-container" contenteditable=true></div>
 <button id=cover>选择封面</button>
 <div id=portrait><span>竖封面3:4</span></div><div id=landscape><span>横封面4:3</span></div>
-<div class=semi-select>请选择合集</div>
+<div class=cover-check></div><div class=semi-select>请选择合集</div>
 <div class=semi-select>请选择自主声明</div>
 <label data-checked=true><input type=checkbox checked>公开</label>
 <label data-checked=true><input type=checkbox checked>立即发布</label>
@@ -28,8 +37,33 @@ HTML = """<!doctype html><meta charset="utf-8"><body>
 const mode = __MODE__;
 const api = path => fetch(path).then(r=>r.json());
 api('/web/api/media/user/info/');
+if(mode==='rich-editor') {
+  const body=document.querySelector('[contenteditable]');
+  body.addEventListener('beforeinput', event=>{
+    if(event.inputType!=='insertText' || event.data===null) return;
+    event.preventDefault(); body.replaceChildren();
+    for(const line of event.data.split('\n')) {
+      const row=document.createElement('div');row.className='ace-line';row.dataset.node='true';
+      const wrapper=document.createElement('div');wrapper.dataset.lineWrapper='true';
+      const value=document.createElement('span');value.dataset.string='true';value.textContent=line;
+      const sentinel=document.createElement('span');sentinel.dataset.string='true';sentinel.dataset.enter='true';sentinel.textContent='\u200b';
+      wrapper.append(value,sentinel);row.append(wrapper);body.append(row);
+    }
+  });
+}
 if(location.pathname.includes('manage')) {
   document.querySelector('#upload').remove();
+  if(['collection-tip', 'unknown-tip', 'collection-tip-auth', 'collection-tip-retained-auth'].includes(mode)) {
+    const tip=document.createElement('div');tip.setAttribute('role','dialog');
+    tip.innerHTML='<span>'+(mode==='unknown-tip'?'未识别的提示':'合集管理移到这里啦')+'</span><button>知道了</button>';
+    tip.querySelector('button').onclick=()=>{
+      if(mode!=='collection-tip-retained-auth') tip.remove();
+      if(mode==='collection-tip-auth' || mode==='collection-tip-retained-auth') {
+        const challenge=document.createElement('div');challenge.setAttribute('role','dialog');
+        challenge.textContent='安全验证';document.body.append(challenge);
+      }
+    }; document.body.append(tip);
+  }
   api('/janus/douyin/creator/pc/work_list');
 } else {
 document.querySelector('#upload').onchange=async e=>{
@@ -42,16 +76,32 @@ document.querySelector('#upload').onchange=async e=>{
 };
 document.querySelector('#cover').onclick=()=>{
   const modal=document.createElement('div');modal.setAttribute('role','dialog');
-  modal.innerHTML='<span>设置竖封面</span><div class="preview-frame-replay">frame</div><button id="landscape">设置横封面</button><button id="finish">完成</button>';
+  modal.innerHTML='<span>设置竖封面</span><div style="position:relative;width:40px;height:32px"><div class="preview-frame-replay" style="width:40px;height:32px">frame</div><div class="slider-preview-replay" style="position:absolute;inset:0"></div></div><button id="landscape">设置横封面</button><button id="finish">完成</button>';
   document.body.append(modal);
+  const selected = new Set();
+  modal.querySelector('.slider-preview-replay').onclick=()=>selected.add(modal.querySelector('span').textContent);
   modal.querySelector('#landscape').onclick=()=>{modal.querySelector('span').textContent='设置横封面';};
-  modal.querySelector('#finish').onclick=()=>{
-    if(mode!=='missing-covers') {
-      document.querySelector('#portrait').insertAdjacentHTML('beforeend','<img src="/cover">');
-      document.querySelector('#landscape').insertAdjacentHTML('beforeend','<img src="/cover">');
+  modal.querySelector('#finish').onclick=async()=>{
+    if(mode!=='missing-covers' && selected.size===2) {
+      document.querySelector('#portrait').insertAdjacentHTML('beforeend','<img src="/portrait-cover">');
+      document.querySelector('#landscape').insertAdjacentHTML('beforeend','<img src="/landscape-cover">');
+      if(mode==='pending-covers') {
+        const blob=URL.createObjectURL(await fetch('/cover').then(r=>r.blob()));
+        for(const img of document.querySelectorAll('#portrait img, #landscape img')) img.src=blob;
+      }
+      if(mode==='uncropped-covers') {
+        for(const img of document.querySelectorAll('#portrait img, #landscape img')) img.src='/uncropped-cover';
+      }
     }
+    document.querySelector('.cover-check').textContent='封面检测通过';
     modal.remove();
     if(mode==='replaced-preview')document.querySelector('video').src='/different-video';
+    if(mode==='preview-tabs') {
+      document.querySelector('video').remove();
+      const tab=document.createElement('div');tab.textContent='预览视频';
+      tab.onclick=()=>{const video=document.createElement('video');video.src='/tos-cn-v/fixture-video';video.preload='auto';document.querySelector('#editor').append(video);video.load();};
+      document.querySelector('#editor').append(tab);
+    }
   };
 };
 document.querySelector('#publish').onclick=async()=>{
@@ -97,7 +147,10 @@ class DouyinSite:
                     return self.send(HTML.replace("__MODE__", json.dumps(site.mode)), "text/html; charset=utf-8")
                 if path == "/tos-cn-v/fixture-video":
                     return self.send((Path(__file__).parent / "fixtures/douyin-preview.webm").read_bytes(), "video/webm")
-                if path in {"/cover", "/changed-cover"}:
+                if path in {"/portrait-cover", "/landscape-cover", "/changed-cover", "/uncropped-cover"}:
+                    size = (3, 4) if path == '/portrait-cover' else (9, 16) if path == '/uncropped-cover' else (4, 3)
+                    return self.send(cover_png(*size), "image/png")
+                if path == "/cover":
                     from tests.task_fixtures import IMAGE_BYTES
                     return self.send(IMAGE_BYTES, "image/png")
                 self.send_error(404)
@@ -162,6 +215,8 @@ class DouyinSite:
                     await self.page.locator('#landscape img').evaluate("img=>img.remove()")
                 elif site.mode == "changed-cover-after-ready":
                     await self.page.locator('#landscape img').evaluate("img=>img.src='/changed-cover'")
+                elif site.mode == "failed-cover-check-after-ready":
+                    await self.page.locator('.cover-check').evaluate("el=>el.textContent='封面检测未通过'")
                 return result
 
         return ReplayAdapter(service.runtime_dir, ReplayPort,
