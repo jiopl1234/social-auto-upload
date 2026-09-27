@@ -2,10 +2,11 @@
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 import sqlite3
 
 from orchestrator.service import TaskService
-from tests.task_fixtures import make_manifest, make_service
+from tests.task_fixtures import IMAGE_BYTES, make_manifest, make_service
 
 
 def _version_two_database(path):
@@ -55,7 +56,7 @@ def test_v2_database_upgrades_and_future_schedule_stays_queued(tmp_path):
     assert legacy["created_at"] == "2025-01-01T01:02:03.000000Z"
     assert legacy["updated_at"] == "2025-01-02T03:04:05.000000Z"
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         tables = {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'"
         )}
@@ -83,3 +84,28 @@ def test_v2_database_upgrades_and_future_schedule_stays_queued(tmp_path):
     batch = service.enqueue_batch(batch_manifest)
     assert [target["status"] for target in batch["targets"]] == ["QUEUED", "QUEUED"]
     assert service.status("legacy-v2-job") == legacy
+
+
+def test_v3_job_replay_survives_removed_media_cover_and_session(tmp_path):
+    service = make_service(tmp_path)
+    cover = tmp_path / "media" / "cover.png"
+    cover.write_bytes(IMAGE_BYTES)
+    request = make_manifest(tmp_path, cover=str(cover), run_at={
+        "local": "2030-01-01T00:15:00", "timezone": "Asia/Shanghai"})
+    original = service.enqueue(request)
+    events = service.events(original["job_id"])
+    # Restore the v3 table shape: original input was not saved by that version.
+    with sqlite3.connect(service.store.path) as connection:
+        connection.execute("ALTER TABLE jobs DROP COLUMN intake_json")
+        connection.execute("ALTER TABLE jobs DROP COLUMN intake_digest")
+        connection.execute("PRAGMA user_version = 3")
+    Path(request["media"][0]).unlink()
+    cover.unlink()
+    for state in (tmp_path / "runtime" / "sessions").rglob("*.json"):
+        state.unlink()
+
+    restarted = TaskService(service.store.path, runtime_dir=service.runtime_dir,
+                            media_roots=[tmp_path / "media"])
+    assert restarted.enqueue(request) == original
+    assert restarted.events(original["job_id"]) == events
+    assert restarted.attempts(original["job_id"]) == []

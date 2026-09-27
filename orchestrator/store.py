@@ -18,7 +18,7 @@ from .diagnostics import (diagnostic_error, diagnostic_event, diagnostic_stage,
 from .scheduling import is_due
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -118,6 +118,10 @@ class Store:
                 version = 2
             if version == 2:
                 self._create_fanout_tables(connection)
+                version = 3
+            if version == 3:
+                connection.execute("ALTER TABLE jobs ADD COLUMN intake_json TEXT")
+                connection.execute("ALTER TABLE jobs ADD COLUMN intake_digest TEXT")
                 connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 return
 
@@ -129,6 +133,8 @@ class Store:
                     delivery_key TEXT NOT NULL,
                     request_digest TEXT NOT NULL,
                     manifest_json TEXT NOT NULL,
+                    intake_json TEXT,
+                    intake_digest TEXT,
                     attempt_id TEXT,
                     status TEXT NOT NULL,
                     submission TEXT NOT NULL,
@@ -257,17 +263,46 @@ class Store:
             raise TaskError("NOT_FOUND", f"Job {job_id} was not found.")
         return row
 
-    def enqueue(self, manifest: dict) -> dict:
+    @classmethod
+    def _replay_intake(cls, row: sqlite3.Row, request_json: str, digest: str) -> dict:
+        if row["intake_json"] is None:
+            from .manifest import matches_legacy_intake
+
+            matches = matches_legacy_intake(json.loads(request_json), json.loads(row["manifest_json"]))
+        else:
+            matches = row["intake_digest"] == digest and row["intake_json"] == request_json
+        if matches:
+            return cls._job_from_row(row)
+        raise TaskError("CONFLICT", "Delivery key is already used for a different request.", field="delivery_key")
+
+    def find_intake(self, request: dict) -> dict | None:
+        """Resolve a replay before opening account sessions or input files."""
+        request_json = _canonical_json(request)
+        digest = sha256(request_json.encode("utf-8")).hexdigest()
+        with self.transaction() as connection:
+            existing = connection.execute(
+                "SELECT * FROM jobs WHERE platform = ? AND account = ? AND delivery_key = ?",
+                (request["platform"], request["account"], request["delivery_key"]),
+            ).fetchone()
+            if existing is None:
+                return None
+            return self._replay_intake(existing, request_json, digest)
+
+    def enqueue(self, manifest: dict, *, intake: dict | None = None) -> dict:
         if not isinstance(manifest, dict):
             raise TaskError("INVALID_MANIFEST", "Manifest must be a JSON object.")
         for field in ("platform", "account", "delivery_key"):
             if not isinstance(manifest.get(field), str) or not manifest[field]:
                 raise TaskError("INVALID_MANIFEST", f"Manifest requires a nonempty {field}.", field=field)
+            if intake is not None and intake.get(field) != manifest[field]:
+                raise TaskError("INVALID_MANIFEST", "Request identity differs from the normalized manifest.", field=field)
         try:
             manifest_json = _canonical_json(manifest)
+            intake_json = _canonical_json(intake) if intake is not None else None
         except (TypeError, ValueError) as exc:
             raise TaskError("INVALID_MANIFEST", "Manifest must contain only finite JSON values.") from exc
         digest = sha256(manifest_json.encode("utf-8")).hexdigest()
+        intake_digest = sha256(intake_json.encode("utf-8")).hexdigest() if intake_json is not None else None
         platform = manifest["platform"]
         account = manifest["account"]
         delivery_key = manifest["delivery_key"]
@@ -278,6 +313,9 @@ class Store:
                 (platform, account, delivery_key),
             ).fetchone()
             if existing is not None:
+                if intake_json is not None:
+                    assert intake_digest is not None
+                    return self._replay_intake(existing, intake_json, intake_digest)
                 if existing["request_digest"] == digest and existing["manifest_json"] == manifest_json:
                     return self._job_from_row(existing)
                 raise TaskError("CONFLICT", "Delivery key is already used for a different manifest.", field="delivery_key")
@@ -286,13 +324,13 @@ class Store:
             now = self._utc_now()
             connection.execute(
                 """INSERT INTO jobs (
-                    job_id, platform, account, delivery_key, request_digest, manifest_json,
+                    job_id, platform, account, delivery_key, request_digest, manifest_json, intake_json, intake_digest,
                     attempt_id, status, submission, platform_result, content_id, verified_at,
                     actual_metadata_json, warnings_json, error_json, evidence_json,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, NULL, 'QUEUED', 'NOT_SUBMITTED', NULL, NULL, NULL,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'QUEUED', 'NOT_SUBMITTED', NULL, NULL, NULL,
                           NULL, '[]', NULL, '[]', ?, ?)""",
-                (job_id, platform, account, delivery_key, digest, manifest_json, now, now),
+                (job_id, platform, account, delivery_key, digest, manifest_json, intake_json, intake_digest, now, now),
             )
             connection.execute(
                 "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) "

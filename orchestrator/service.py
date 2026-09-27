@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,13 +23,38 @@ class TaskService:
         self.media_roots = tuple(Path(root).resolve() for root in (media_roots or ()))
 
     def enqueue(self, manifest: dict[str, Any]) -> dict:
-        return self.store.enqueue(self.normalize_input(manifest))
+        self._validate_intake_identity(manifest)
+        if any(not isinstance(key, str) for key in manifest):
+            raise TaskError("INVALID_INPUT", "Manifest keys must be strings", field="manifest")
+        try:
+            request = json.loads(json.dumps(manifest, ensure_ascii=False, allow_nan=False))
+        except (TypeError, ValueError) as exc:
+            raise TaskError("INVALID_INPUT", "Manifest contains a non-JSON value", field="manifest") from exc
+        existing = self.store.find_intake(request)
+        if existing is not None:
+            return existing
+        try:
+            normalized = self.normalize_input(request)
+        except TaskError:
+            # Another process may have committed this request while local
+            # validation was in flight and its inputs were being removed.
+            existing = self.store.find_intake(request)
+            if existing is not None:
+                return existing
+            raise
+        return self.store.enqueue(normalized, intake=request)
 
     def normalize_input(self, manifest: dict[str, Any]) -> dict[str, Any]:
         """Validate one intake request and return its durable normalized snapshot."""
         from orchestrator.accounts import get_binding
         from orchestrator.manifest import normalize_manifest
 
+        self._validate_intake_identity(manifest)
+        binding = get_binding(self.store, self.runtime_dir, manifest["platform"], manifest["account"])
+        return normalize_manifest(manifest, self.media_roots, binding["expected_id"])
+
+    @staticmethod
+    def _validate_intake_identity(manifest: dict[str, Any]) -> None:
         if not isinstance(manifest, dict):
             raise TaskError("INVALID_INPUT", "Manifest must be a JSON object", field="manifest")
         if type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 1:
@@ -43,8 +69,6 @@ class TaskService:
             raise TaskError("UNSUPPORTED", "Content type is not supported", field="content_type")
         if manifest["platform"] == "tencent" and manifest["content_type"] != "video":
             raise TaskError("UNSUPPORTED", "Tencent tasks support video only", field="content_type")
-        binding = get_binding(self.store, self.runtime_dir, manifest["platform"], manifest["account"])
-        return normalize_manifest(manifest, self.media_roots, binding["expected_id"])
 
     def bind_account(self, platform: str, account: str, expected_id: str, session_source: Path | str) -> dict:
         from orchestrator.accounts import bind_account
@@ -101,6 +125,12 @@ class TaskService:
             if result is None:
                 return completed
             completed.append(result)
+            # run_once persists cancellation instead of propagating it. It can
+            # appear as a warning when delivery or another error is already
+            # known; either form stops this executor before another claim.
+            diagnostics = [result.get("error") or {}, *result.get("warnings", [])]
+            if any(item.get("code") == "CANCELLED" for item in diagnostics):
+                return completed
 
     def accounts(self) -> list[dict]:
         return self.store.accounts()

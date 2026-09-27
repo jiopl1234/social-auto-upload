@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -94,6 +95,46 @@ def normalize_manifest(raw: dict[str, Any], media_roots: tuple[Path, ...], expec
         if normalized["cover"]["kind"] != "image":
             raise TaskError("UNSUPPORTED", "Cover must be an image", field="cover")
     return normalized
+
+
+def matches_legacy_intake(request: dict[str, Any], snapshot: dict[str, Any]) -> bool:
+    """Compare v1-v3 inputs with their durable snapshot without filesystem IO.
+
+    Old records did not preserve original path aliases. Only their saved
+    canonical paths can be matched; never guess an alias by opening media.
+    """
+    candidate = dict(request)
+    expected = {key: value for key, value in snapshot.items() if key != "expected_account_id"}
+
+    def path_key(value: Any) -> str | None:
+        if not isinstance(value, str) or not value or not Path(value).is_absolute():
+            return None
+        return os.path.normcase(os.path.normpath(value))
+
+    media = candidate.get("media")
+    saved_media = expected.get("media")
+    if not isinstance(media, list) or not isinstance(saved_media, list) or len(media) != len(saved_media):
+        return False
+    requested_paths = [path_key(item) for item in media]
+    saved_paths = [path_key(item.get("path")) if isinstance(item, dict) else None for item in saved_media]
+    if None in requested_paths or None in saved_paths:
+        return False
+    candidate["media"], expected["media"] = requested_paths, saved_paths
+    if candidate.get("cover") is not None or expected.get("cover") is not None:
+        saved_cover = expected.get("cover")
+        requested_path = path_key(candidate.get("cover"))
+        saved_path = path_key(saved_cover.get("path")) if isinstance(saved_cover, dict) else None
+        if requested_path is None or saved_path is None:
+            return False
+        candidate["cover"], expected["cover"] = requested_path, saved_path
+    if "run_at" in expected:
+        schedule, saved_schedule = candidate.get("run_at"), expected["run_at"]
+        if not isinstance(schedule, dict) or not isinstance(saved_schedule, dict):
+            return False
+        expected["run_at"] = {key: value for key, value in saved_schedule.items()
+                              if key != "utc" and (key != "fold" or "fold" in schedule)}
+    return (json.dumps(candidate, sort_keys=True, ensure_ascii=False, allow_nan=False)
+            == json.dumps(expected, sort_keys=True, ensure_ascii=False, allow_nan=False))
 
 
 def _validate_facts(manifest: dict[str, Any]) -> None:

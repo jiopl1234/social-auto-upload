@@ -90,6 +90,88 @@ def test_cancel_after_remote_write_stays_unknown_then_only_reconciles(tmp_path):
     assert len(service.attempts(job["job_id"])) == 1
 
 
+def test_cancelling_pending_executor_does_not_claim_the_next_job(tmp_path):
+    service = make_service(tmp_path)
+    first = service.enqueue(make_manifest(tmp_path, key="first"))
+    second = service.enqueue(make_manifest(tmp_path, key="second"))
+    started = asyncio.Event()
+
+    class WaitingFirst(PublishingTarget):
+        async def prepare(self, context):
+            if context.job_id == first["job_id"]:
+                started.set()
+                await asyncio.Future()
+            return await super().prepare(context)
+
+    target = WaitingFirst(service)
+
+    async def cancel_executor():
+        running = asyncio.create_task(service.run_pending(adapters={"douyin": target}))
+        await asyncio.wait_for(started.wait(), timeout=3)
+        running.cancel()
+        return await asyncio.wait_for(running, timeout=3)
+
+    results = asyncio.run(cancel_executor())
+    assert [result["job_id"] for result in results] == [first["job_id"]]
+    assert results[0]["status"] == "CANCELLED"
+    assert service.status(first["job_id"]) == results[0]
+    assert service.status(second["job_id"])["status"] == "QUEUED"
+    assert service.attempts(second["job_id"]) == []
+    assert target.writes == []
+
+    resumed = asyncio.run(service.run_pending(adapters={"douyin": target}))
+    assert [result["job_id"] for result in resumed] == [second["job_id"]]
+    assert resumed[0]["status"] == "COMPLETED"
+    assert len(target.writes) == 1
+
+
+@pytest.mark.parametrize("phase", ["submit", "cleanup", "cleanup_after_error"])
+def test_pending_executor_stops_when_cancellation_is_a_delivery_warning(tmp_path, phase):
+    service = make_service(tmp_path)
+    first = service.enqueue(make_manifest(tmp_path, key="first"))
+    second = service.enqueue(make_manifest(tmp_path, key="second"))
+    waiting = asyncio.Event()
+
+    class CancellableTarget(PublishingTarget):
+        async def prepare(self, context):
+            if phase == "cleanup_after_error":
+                raise TaskError("UPLOAD_FAILED", "The first upload failed")
+            return await super().prepare(context)
+
+        async def submit(self, context):
+            receipt = await super().submit(context)
+            if phase == "submit":
+                waiting.set()
+                await asyncio.Future()
+            return receipt
+
+        async def close(self):
+            if phase != "submit" and self.closed == 0:
+                waiting.set()
+                await asyncio.sleep(0.05)
+            await super().close()
+
+    target = CancellableTarget(service)
+
+    async def cancel_executor():
+        running = asyncio.create_task(service.run_pending(adapters={"douyin": target}, max_attempts=1))
+        await asyncio.wait_for(waiting.wait(), timeout=3)
+        running.cancel()
+        return await asyncio.wait_for(running, timeout=3)
+
+    results = asyncio.run(cancel_executor())
+    assert [result["job_id"] for result in results] == [first["job_id"]]
+    result = results[0]
+    assert any(item.get("code") == "CANCELLED" for item in [result["error"] or {}, *result["warnings"]])
+    assert result["status"] == {"submit": "UNKNOWN_COMMIT", "cleanup": "COMPLETED",
+                                "cleanup_after_error": "FAILED_PRE_SUBMIT"}[phase]
+    assert service.status(first["job_id"]) == result
+    assert service.status(second["job_id"])["status"] == "QUEUED"
+    assert service.attempts(second["job_id"]) == []
+    assert len(target.writes) == (0 if phase == "cleanup_after_error" else 1)
+    assert target.closed == 1
+
+
 def test_submit_and_read_only_timeouts_never_repeat_final_action(tmp_path):
     service = make_service(tmp_path)
     job = service.enqueue(make_manifest(tmp_path))

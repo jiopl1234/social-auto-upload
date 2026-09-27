@@ -24,6 +24,8 @@ Tracker: local Markdown
 
 当前 frontier：无。01–15 全部完成；干净环境统一验收为 342 项测试与 20 项子测试通过、0 skipped，核心与 CLI 类型检查为 0 errors。
 
+2026-09-27 补充审查：基线 0012d2c...064f7ff 发现的取消、提交后挑战、重复入队与会话读取四类问题正在修复和复验。历史票完成记录及上述 342 项结果保留为当时基线；新结果以 [补充修复记录](C:/Users/Chinese/social-auto-upload/docs/audit/review-fixes-2026-09-27.md) 为准。
+
 最终证据：[五路径联合验收](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-validation.md)、[独立双轴审查](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-15-review.md)。五路径均已通过本地任务协议与合成页面验证；真实平台账号身份、逐素材状态和作品读回没有实测证据，生产执行保持 restricted。
 
 04/05 的证据：[验证记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-validation.md)、[审查记录](C:/Users/Chinese/social-auto-upload/docs/audit/ticket-04-05-review.md)。完整离线测试为 158 项与 20 项子测试通过；真实平台发布仍未验证。

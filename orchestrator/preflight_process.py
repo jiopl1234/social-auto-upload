@@ -68,7 +68,7 @@ def _watch_parent(pid: int, identity: str) -> None:
         time.sleep(0.1)
 
 
-def child_main(operation: Callable[[dict[str, Any]], None] = _run_request) -> int:
+def child_main(operation: Callable[[dict[str, Any]], Any] = _run_request) -> int:
     try:
         request = json.loads(sys.stdin.buffer.read())
         pid = request["parent_pid"]
@@ -78,15 +78,18 @@ def child_main(operation: Callable[[dict[str, Any]], None] = _run_request) -> in
         if process_state(pid, identity) != "LIVE":
             return 3
         threading.Thread(target=_watch_parent, args=(pid, identity), daemon=True).start()
-        operation(request)
+        result = operation(request)
         response: dict[str, Any] = {"ok": True}
+        if result is not None:
+            response["result"] = result
     except TaskError as exc:
         response = {"ok": False, "code": exc.code if exc.code in _SAFE_CODES else "PREFLIGHT_FAILED",
                     "field": exc.field if isinstance(exc.field, str) else None}
     except (KeyError, TypeError, ValueError, OSError):
         response = {"ok": False, "code": "PREFLIGHT_FAILED", "field": None}
-    sys.stdout.write(json.dumps(response, separators=(",", ":")))
-    sys.stdout.flush()
+    sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False, allow_nan=False,
+                                       separators=(",", ":")).encode("utf-8"))
+    sys.stdout.buffer.flush()
     return 0
 
 
@@ -153,7 +156,7 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
     await run_child_request(request)
 
 
-async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process") -> None:
+async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process") -> Any:
     """Run an internal operation in a watched child that is reaped on cancellation."""
     if module not in {"orchestrator.preflight_process", "orchestrator.diagnostic_process", "orchestrator.session_process"}:
         raise TaskError("UNSUPPORTED", "Child operation is not supported")
@@ -209,7 +212,11 @@ async def run_child_request(request: dict[str, Any], *, module: str = "orchestra
         if not await _stop_child(process, reader):
             raise TaskError("RESOURCES_UNCONFIRMED", "Preflight process shutdown could not be confirmed")
         raise
-    if returncode != 0 or output is None or len(output) > 4096:
+    # A read returns one validated storage-state snapshot (source is capped at
+    # 5 MB). Other child operations only return compact status envelopes.
+    response_limit = (10_000_000 if module == "orchestrator.session_process"
+                      and request.get("action") == "read" else 4096)
+    if returncode != 0 or output is None or len(output) > response_limit:
         raise TaskError("PREFLIGHT_FAILED", "Preflight process failed")
     try:
         response = json.loads(output)
@@ -218,7 +225,7 @@ async def run_child_request(request: dict[str, Any], *, module: str = "orchestra
     if not isinstance(response, dict) or type(response.get("ok")) is not bool:
         raise TaskError("PREFLIGHT_FAILED", "Preflight process returned an invalid result")
     if response["ok"]:
-        return
+        return response.get("result")
     code = response.get("code")
     field = response.get("field")
     raise TaskError(code if code in _SAFE_CODES else "PREFLIGHT_FAILED", "Preflight verification failed",

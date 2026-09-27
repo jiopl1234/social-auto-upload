@@ -67,6 +67,11 @@ class ExecutionBudget:
                 self.cleanup_diagnostics.append(error.as_dict())
         self.cancelling.discard(task)
 
+    def track(self, task: asyncio.Task) -> None:
+        """Keep a child operation under the existing cleanup/fencing check."""
+        self.pending.add(task)
+        task.add_done_callback(self._completed)
+
     async def _cancel(self, task: asyncio.Task) -> None:
         if task not in self.cancelling:
             self.cancelling.add(task)
@@ -82,8 +87,7 @@ class ExecutionBudget:
         if remaining <= 0:
             raise TaskError("TIMEOUT", "Execution stage exceeded its deadline", field=stage)
         task = asyncio.ensure_future(operation())
-        self.pending.add(task)
-        task.add_done_callback(self._completed)
+        self.track(task)
         started = time.monotonic()
         self.active.setdefault(stage, []).append(started)
         try:

@@ -1,6 +1,7 @@
 """Browser delivery owns one attempt; worker owns the durable submission boundary."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
@@ -133,15 +134,26 @@ class BrowserDeliveryAdapter:
         self.verified_for = context.attempt_id
 
     async def submit(self, context: ExecutionContext) -> dict | None:
-        if self.port is None or self.verified_for != context.attempt_id or self.submission_started:
+        port = self.port
+        if port is None or self.verified_for != context.attempt_id or self.submission_started:
             raise TaskError("INVALID_STATE", "Final action was not prepared for this attempt")
         # All definitely-no-action checks ran before the durable boundary.
         # From here on, a click error or cancellation is conservatively unknown.
         self.submission_started = True
-        return await self.port.submit_once(self.page)
+        try:
+            return await port.submit_once(self.page)
+        finally:
+            observer = getattr(port, "receipt_task", None)
+            if isinstance(observer, asyncio.Task):
+                context.budget.track(observer)
 
     async def reconcile(self, context: ExecutionContext) -> list[dict]:
         port, page = await self._open(context)
+        if self.submission_started:
+            # On this attempt the editor is still open. Inspect it before a
+            # read-only navigation removes a post-click verification prompt.
+            # Recovery opens a blank page and has no editor to inspect yet.
+            await port.check_challenge(page)
         await context.run_stage("navigation", lambda: port.navigate(page, str(context.manifest["content_type"]), readonly=True))
         await self._guard(context)
         return await port.list_works(page, str(context.manifest["content_type"]))

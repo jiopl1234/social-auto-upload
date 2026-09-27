@@ -20,7 +20,11 @@ if(cfg.platform==='xiaohongshu') {const p=document.createElement('p');p.id='body
 else $('body').className=cfg.platform==='douyin'?'zone-container':'input-editor';
 $('publish').textContent=cfg.platform==='tencent'?'发表':'发布';
 $('identity').dataset.accountId = cfg.mode === 'wrong-account' ? 'another-account' : cfg.platform + ':creator';
-function challenge() { const e = document.createElement('div'); e.dataset.challenge='auth'; e.textContent='实名验证 短信验证'; document.body.append(e); }
+function challenge(kind='realname') {
+    const e=document.createElement(kind==='sms'?'input':'div'); e.dataset.challenge='auth';
+    if(kind==='sms') e.placeholder='验证码'; else e.textContent='实名验证';
+    document.body.append(e);
+}
 if (cfg.mode === 'auth') challenge();
 if (cfg.mode === 'blank') $('identity').removeAttribute('data-account-id');
 if (cfg.mode === 'unknown-dialog') { const d=document.createElement('div'); d.role='dialog'; d.textContent='Unknown safety prompt'; document.body.append(d); }
@@ -64,8 +68,12 @@ function metadata() {
 }
 $('publish').onclick=async()=>{
     const payload={account_id:$('identity').dataset.accountId,content_type:cfg.kind,metadata:metadata()};
-    try{const response=await fetch('/publish',{method:'POST',body:JSON.stringify(payload)});const r=await response.json();$('receipt').dataset.contentId=r.content_id;}
-    catch(e){} finally{$('receipt').dataset.observed='true';}
+    try{const response=await fetch('/publish',{method:'POST',body:JSON.stringify(payload)});const r=await response.json();
+        if(cfg.mode.startsWith('auth-after-submit-no-receipt')) challenge();
+        if(cfg.mode==='auth-with-receipt') challenge('sms');
+        if(!cfg.mode.startsWith('auth-after-submit-no-receipt')) $('receipt').dataset.contentId=r.content_id;
+    }
+    catch(e){} finally{if(!cfg.mode.startsWith('auth-after-submit-no-receipt')) $('receipt').dataset.observed='true';}
     if(cfg.mode==='false-success') { history.pushState({},'','/success');$('publish').remove(); }
 };
 if(cfg.readonly) {

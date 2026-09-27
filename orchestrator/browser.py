@@ -10,7 +10,6 @@ from pathlib import Path
 import re
 from typing import Any, Awaitable, Callable, Mapping
 
-from orchestrator.accounts import _storage_state_bytes
 from orchestrator.errors import TaskError
 from orchestrator.preflight_process import run_child_request
 
@@ -86,6 +85,7 @@ class BrowserSession:
         self.cleanup_warnings: list[dict[str, Any]] = []
         self._open_attempted = False
         self._resources_started = False
+        self._session_reader_uncertain = False
         self._creation_uncertain = False
         self._fully_closed = False
 
@@ -96,9 +96,20 @@ class BrowserSession:
         path = Path(session_path)
 
         async def initialize() -> Any:
-            # The caller supplies an account's managed storage-state path. Check
-            # its shape before any external process is started.
-            _storage_state_bytes(path)
+            # Read and validate the managed state in a watched child before
+            # starting any browser resources. The driver uses this exact
+            # snapshot and never reopens the possibly slow session path.
+            try:
+                state = await run_child_request({"action": "read", "path": str(path)},
+                                                module="orchestrator.session_process")
+            except TaskError as exc:
+                if exc.code == "RESOURCES_UNCONFIRMED":
+                    self._session_reader_uncertain = True
+                    self._resources_started = True
+                    self.context.resources_started()
+                raise
+            if not isinstance(state, dict):
+                raise TaskError("STORAGE_ERROR", "Browser session state could not be loaded")
             self.context.resources_started()
             self._resources_started = True
             self._creation_uncertain = True
@@ -114,7 +125,7 @@ class BrowserSession:
                 "browser_version": _browser_version(browser),
                 "launch_options": _safe_launch_options(self.launch_options),
             })
-            browser_context = await browser.new_context(storage_state=str(path))
+            browser_context = await browser.new_context(storage_state=state)
             self.browser_context = browser_context
             if init_script is not None:
                 await browser_context.add_init_script(path=str(init_script))
@@ -210,6 +221,11 @@ class BrowserSession:
                     self.driver = None
             else:
                 failures.append(failure)
+        if self._session_reader_uncertain:
+            failures.append(TaskError("RESOURCES_UNCONFIRMED", "Session read helper shutdown could not be confirmed"))
+            self.cleanup_warnings.append({
+                "code": "CLEANUP_FAILED", "message": "Session read helper shutdown was not confirmed", "field": None,
+            })
         if self._creation_uncertain:
             failures.append(TaskError("RESOURCES_UNCONFIRMED", "Browser creation did not return a confirmed resource"))
             self.cleanup_warnings.append({

@@ -5,7 +5,114 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock
 
-from tests.task_fixtures import make_manifest, make_service
+from tests.task_fixtures import EXPECTED_DELIVERY_PATHS, make_manifest, make_service
+
+
+@pytest.mark.parametrize("platform,content_type", EXPECTED_DELIVERY_PATHS)
+def test_post_submit_challenge_without_receipt_pauses_account_and_never_retries(tmp_path, platform, content_type):
+    from orchestrator.service import TaskService
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    first = service.enqueue(make_manifest(tmp_path, platform=platform, content_type=content_type, key="first"))
+    second = service.enqueue(make_manifest(tmp_path, platform=platform, content_type=content_type, key="second"))
+    with CreatorSite(platform, mode="auth-after-submit-no-receipt") as site:
+        result = asyncio.run(service.run_once(
+            adapters={platform: fixture_adapter(service, site)}, job_id=first["job_id"],
+            limits={"total": 15, "submit": 2, "reconcile": 2, "cleanup": 3}))
+        assert result is not None
+        assert result["status"] == "UNKNOWN_COMMIT"
+        assert result["submission"] == "MAY_HAVE_SUBMITTED"
+        assert result["error"]["code"] == "AUTH_REQUIRED"
+        assert len(site.submissions) == 1
+        assert site.queries == 0
+        assert next(a for a in service.accounts() if a["platform"] == platform)["status"] == "AUTH_REQUIRED"
+
+        restarted = TaskService(service.store.path, runtime_dir=service.runtime_dir,
+                                media_roots=[tmp_path / "media"])
+        recovered = asyncio.run(restarted.run_once(
+            adapters={platform: fixture_adapter(restarted, site)}, job_id=first["job_id"]))
+        next_job = asyncio.run(restarted.run_once(
+            adapters={platform: fixture_adapter(restarted, site)}, job_id=second["job_id"]))
+        assert recovered is not None and recovered["status"] == "UNKNOWN_COMMIT"
+        assert next_job is not None and next_job["status"] == "QUEUED"
+        assert len(site.submissions) == 1
+        assert site.queries == 0
+
+
+@pytest.mark.parametrize("platform,content_type", EXPECTED_DELIVERY_PATHS)
+def test_post_submit_challenge_wins_when_receipt_is_also_available(tmp_path, platform, content_type):
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, platform=platform, content_type=content_type))
+    with CreatorSite(platform, mode="auth-with-receipt") as site:
+        result = asyncio.run(service.run_once(
+            adapters={platform: fixture_adapter(service, site)}, job_id=job["job_id"],
+            limits={"total": 15, "submit": 2, "reconcile": 2, "cleanup": 3}))
+        assert result is not None and result["status"] == "UNKNOWN_COMMIT"
+        assert result["submission"] == "MAY_HAVE_SUBMITTED"
+        assert result["error"]["code"] == "AUTH_REQUIRED"
+        assert next(a for a in service.accounts() if a["platform"] == platform)["status"] == "AUTH_REQUIRED"
+        assert len(site.submissions) == 1
+        assert site.queries == 0
+
+
+def test_challenge_on_editor_is_seen_before_readonly_navigation(tmp_path):
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, platform="tencent"))
+    with CreatorSite("tencent", mode="auth-before-reconcile") as site:
+        result = asyncio.run(service.run_once(
+            adapters={"tencent": fixture_adapter(service, site)}, job_id=job["job_id"],
+            limits={"total": 15, "submit": 2, "reconcile": 2, "cleanup": 3}))
+        assert result is not None and result["status"] == "UNKNOWN_COMMIT"
+        assert any(item["code"] == "AUTH_REQUIRED" for item in result["warnings"])
+        assert next(a for a in service.accounts() if a["platform"] == "tencent")["status"] == "AUTH_REQUIRED"
+        assert len(site.submissions) == 1
+        assert site.queries == 0
+
+
+def test_cancel_resistant_receipt_observer_keeps_account_fenced(tmp_path, caplog):
+    from orchestrator.errors import TaskError
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    first = service.enqueue(make_manifest(tmp_path, platform="tencent", key="first"))
+    second = service.enqueue(make_manifest(tmp_path, platform="tencent", key="second"))
+    with CreatorSite("tencent", mode="auth-after-submit-no-receipt-slow-cancel") as site:
+        result = asyncio.run(service.run_once(
+            adapters={"tencent": fixture_adapter(service, site)}, job_id=first["job_id"],
+            limits={"total": 15, "submit": 2, "reconcile": 2, "cleanup": 3}))
+        assert result is not None and result["status"] == "UNKNOWN_COMMIT"
+        assert result["error"]["code"] == "AUTH_REQUIRED"
+        assert any(item["code"] == "RESOURCES_UNCONFIRMED" for item in result["warnings"])
+        assert next(a for a in service.accounts() if a["platform"] == "tencent")["status"] == "AUTH_REQUIRED"
+        with pytest.raises(TaskError) as blocked:
+            asyncio.run(service.run_once(adapters={"tencent": fixture_adapter(service, site)}, job_id=second["job_id"]))
+        assert blocked.value.code in {"ACCOUNT_BUSY", "RESOURCES_UNCONFIRMED"}
+        assert service.status(second["job_id"])["status"] == "QUEUED"
+        assert len(site.submissions) == 1
+        assert site.queries == 0
+        assert "Task exception was never retrieved" not in caplog.text
+        assert "private browser diagnostic" not in caplog.text
+
+
+def test_receipt_exception_after_challenge_is_consumed(tmp_path, caplog):
+    from tests.platform_fixture import CreatorSite, fixture_adapter
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, platform="tencent"))
+    with CreatorSite("tencent", mode="auth-after-submit-no-receipt-raises-on-cancel") as site:
+        result = asyncio.run(service.run_once(
+            adapters={"tencent": fixture_adapter(service, site)}, job_id=job["job_id"],
+            limits={"total": 15, "submit": 2, "cleanup": 3}))
+        assert result is not None and result["status"] == "UNKNOWN_COMMIT"
+        assert result["error"]["code"] == "AUTH_REQUIRED"
+        assert len(site.submissions) == 1
+        assert "Task exception was never retrieved" not in caplog.text
+        assert "private browser diagnostic" not in caplog.text
 
 
 def test_unverified_live_video_paths_stop_before_browser_or_submission(tmp_path):

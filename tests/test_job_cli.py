@@ -95,6 +95,30 @@ def test_competing_enqueue_processes_return_one_delivery(tmp_path):
     assert len(listing["jobs"]) == 1
 
 
+def test_duplicate_enqueue_after_media_removal_returns_original_without_new_events(tmp_path):
+    db = tmp_path / "tasks.sqlite3"
+    bind_local_account(db)
+    manifest_path = write_manifest(tmp_path)
+    request = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _, first = run_jobs(db, "enqueue", "--manifest", manifest_path)
+    Path(request["media"][0]).unlink()
+
+    completed, repeated = run_jobs(db, "enqueue", "--manifest", manifest_path)
+    assert completed.returncode == 0, repeated
+    assert repeated == first
+
+    manifest_path.write_text(json.dumps({**request, "body": "Changed input"}), encoding="utf-8")
+    completed, conflict = run_jobs(db, "enqueue", "--manifest", manifest_path)
+    assert completed.returncode == 4
+    assert conflict["error"]["code"] == "CONFLICT"
+    _, listing = run_jobs(db, "list")
+    assert listing["jobs"] == [first]
+    _, history = run_jobs(db, "events", first["job_id"])
+    assert len(history["events"]) == 1
+    _, attempts = run_jobs(db, "attempts", first["job_id"])
+    assert attempts["attempts"] == []
+
+
 def test_event_write_failure_rolls_back_delivery(tmp_path):
     db = tmp_path / "tasks.sqlite3"
     bind_local_account(db)

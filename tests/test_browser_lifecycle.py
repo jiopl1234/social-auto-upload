@@ -13,6 +13,7 @@ import pytest
 
 from orchestrator.accounts import managed_session_path
 from orchestrator.browser import BrowserSession
+from orchestrator.errors import TaskError
 from tests.task_fixtures import make_manifest, make_service
 
 
@@ -81,7 +82,8 @@ class LocalBrowser:
 
     async def new_context(self, *, storage_state):
         self.harness.calls.append("browser.new_context")
-        assert Path(storage_state).is_file()
+        assert isinstance(storage_state, dict)
+        self.harness.loaded_state = storage_state
         if "context" in self.harness.faults:
             raise RuntimeError("secret cookie value")
         self.context = LocalContext(self.harness)
@@ -132,6 +134,7 @@ class DriverHarness:
         self.browser: LocalBrowser | None = None
         self.launch_options = None
         self.fenced_at_launch = False
+        self.loaded_state = None
         self.page_started = asyncio.Event()
 
     async def start(self):
@@ -180,6 +183,153 @@ def _run(service, job, adapter, **kwargs):
 
 
 @pytest.mark.parametrize("cancel", [False, True])
+def test_blocked_session_read_exits_before_driver_and_releases_account(tmp_path, monkeypatch, cancel):
+    from orchestrator import preflight_process
+
+    service = make_service(tmp_path)
+    blocked = service.enqueue(make_manifest(tmp_path, key="blocked-read"))
+    next_job = service.enqueue(make_manifest(tmp_path, key="after-read"))
+    session = _session_path(service)
+    marker = tmp_path / "session-opened"
+    harness = DriverHarness()
+    original = subprocess.Popen
+    started = asyncio.Event()
+    child = None
+
+    def start_child(command, **kwargs):
+        nonlocal child
+        if "orchestrator.session_process" in command:
+            script = (
+                "from pathlib import Path; import sys, time; "
+                "stream = Path(sys.argv[1]).open('rb'); "
+                "Path(sys.argv[2]).write_text('opened'); "
+                "time.sleep(30); stream.read()"
+            )
+            child = original([command[0], "-c", script, str(session), str(marker)], **kwargs)
+            started.set()
+            return child
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(preflight_process.subprocess, "Popen", start_child)
+    limits = {"total": 5.0, "navigation": 1.0, "cleanup": 2.0}
+    if cancel:
+        async def cancel_while_reading():
+            running = asyncio.create_task(service.run_once(
+                adapters={"douyin": BrowserPreparation(session, harness)},
+                job_id=blocked["job_id"], limits=limits))
+            await asyncio.wait_for(started.wait(), timeout=3)
+            for _ in range(100):
+                if marker.is_file():
+                    break
+                await asyncio.sleep(0.01)
+            assert marker.is_file(), "the child must open the actual managed session"
+            await asyncio.wait_for(asyncio.sleep(0.03), timeout=0.25)
+            running.cancel()
+            return await asyncio.wait_for(running, timeout=3)
+
+        result = asyncio.run(cancel_while_reading())
+    else:
+        result = _run(service, blocked, BrowserPreparation(session, harness), limits=limits)
+    assert marker.is_file(), "the child must open the actual managed session"
+    assert result is not None
+    assert result["status"] == ("CANCELLED" if cancel else "FAILED_PRE_SUBMIT")
+    assert result["error"]["code"] == ("CANCELLED" if cancel else "TIMEOUT")
+    if not cancel:
+        assert result["error"]["field"] == "navigation"
+    assert harness.calls == []
+    assert child is not None and child.poll() is not None
+    monkeypatch.setattr(preflight_process.subprocess, "Popen", original)
+    assert _run(service, next_job, BrowserPreparation(session, DriverHarness()))["status"] == "READY"
+
+
+def test_browser_uses_validated_session_snapshot_after_file_is_removed(tmp_path):
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, key="snapshot"))
+    session = _session_path(service)
+    expected = {"cookies": [{
+        "name": "session", "value": "private-cookie-value", "domain": "local.invalid",
+        "path": "/", "sameSite": "Lax", "httpOnly": True, "secure": False,
+        "expires": -1,
+    }], "origins": []}
+    session.write_text(json.dumps(expected), encoding="utf-8")
+    harness = DriverHarness()
+
+    async def start_after_source_removed():
+        session.unlink()
+        return await DriverHarness.start(harness)
+
+    harness.start = start_after_source_removed
+    result = _run(service, job, BrowserPreparation(session, harness))
+    assert result["status"] == "READY"
+    assert harness.loaded_state == expected
+    assert not session.exists()
+    assert "private-cookie-value" not in json.dumps(result)
+    assert "private-cookie-value" not in json.dumps(service.events(job["job_id"]))
+
+
+def test_invalid_session_is_rejected_before_driver_without_cookie_diagnostics(tmp_path):
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path, key="invalid-session"))
+    session = _session_path(service)
+    session.write_text(json.dumps({"cookies": "private-cookie-value", "origins": []}), encoding="utf-8")
+    harness = DriverHarness()
+
+    result = _run(service, job, BrowserPreparation(session, harness))
+    assert result["status"] == "FAILED_PRE_SUBMIT"
+    assert result["error"]["code"] == "INVALID_INPUT"
+    assert harness.calls == []
+    assert "private-cookie-value" not in json.dumps(result)
+    assert "private-cookie-value" not in json.dumps(service.events(job["job_id"]))
+
+
+def test_unconfirmed_session_reader_keeps_account_fenced(tmp_path, monkeypatch):
+    from orchestrator import preflight_process
+
+    service = make_service(tmp_path)
+    blocked = service.enqueue(make_manifest(tmp_path, key="uncertain-read"))
+    next_job = service.enqueue(make_manifest(tmp_path, key="after-uncertain"))
+    session = _session_path(service)
+    marker = tmp_path / "uncertain-session-opened"
+    harness = DriverHarness()
+    original_popen = subprocess.Popen
+    original_stop = preflight_process._stop_child
+    child = None
+
+    def start_child(command, **kwargs):
+        nonlocal child
+        if "orchestrator.session_process" in command:
+            script = (
+                "from pathlib import Path; import sys, time; "
+                "stream = Path(sys.argv[1]).open('rb'); "
+                "Path(sys.argv[2]).write_text('opened'); "
+                "time.sleep(30); stream.read()"
+            )
+            child = original_popen([command[0], "-c", script, str(session), str(marker)], **kwargs)
+            return child
+        return original_popen(command, **kwargs)
+
+    async def unconfirmed_stop(process, reader):
+        assert await original_stop(process, reader)
+        return False
+
+    monkeypatch.setattr(preflight_process.subprocess, "Popen", start_child)
+    monkeypatch.setattr(preflight_process, "_stop_child", unconfirmed_stop)
+    result = _run(service, blocked, BrowserPreparation(session, harness),
+                  limits={"total": 5, "navigation": 1, "cleanup": 2})
+    assert marker.is_file()
+    assert child is not None and child.poll() is not None
+    assert harness.calls == []
+    assert result["status"] == "BLOCKED"
+    assert result["error"]["code"] == "TIMEOUT"
+    assert any(warning["code"] == "RESOURCES_UNCONFIRMED" for warning in result["warnings"])
+    assert any(warning["code"] == "CLEANUP_FAILED" for warning in result["warnings"])
+    monkeypatch.setattr(preflight_process.subprocess, "Popen", original_popen)
+    with pytest.raises(TaskError) as blocked_account:
+        _run(service, next_job, BrowserPreparation(session, DriverHarness()))
+    assert blocked_account.value.code == "ACCOUNT_BUSY"
+
+
+@pytest.mark.parametrize("cancel", [False, True])
 def test_slow_session_filesystem_cannot_starve_browser_cleanup(tmp_path, monkeypatch, cancel):
     from orchestrator import preflight_process
 
@@ -194,7 +344,7 @@ def test_slow_session_filesystem_cannot_starve_browser_cleanup(tmp_path, monkeyp
 
     def start_child(command, **kwargs):
         nonlocal child
-        if "orchestrator.session_process" in command:
+        if "orchestrator.session_process" in command and harness.browser is not None and child is None:
             child = original([command[0], "-c", "import time; time.sleep(30)"], **kwargs)
             started.set()
             return child

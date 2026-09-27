@@ -1,6 +1,7 @@
 """Synthetic creator UI and independent loopback work store; no platform requests."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -126,6 +127,25 @@ class FixtureEvidence:
         return {"content_id": content_id} if content_id else None
 
 
+class SlowCancelledReceiptEvidence(FixtureEvidence):
+    async def receipt(self, page):
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            # Fault injection: the external observation ignores the first
+            # cancellation long enough to outlive browser cleanup.
+            await asyncio.sleep(5)
+
+
+class FailingCancelledReceiptEvidence(FixtureEvidence):
+    async def receipt(self, page):
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            await asyncio.sleep(0)
+            raise RuntimeError("private browser diagnostic must stay hidden")
+
+
 def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None = None,
                     cleanup_error: bool = False):
     import pytest
@@ -150,6 +170,18 @@ def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None
                 failure = TaskError("CLEANUP_FAILED", "Driver shutdown could not be confirmed")
                 self.cleanup_warnings.append(failure.as_dict())
                 raise failure
+    class ChallengeBeforeReconcileAdapter(BrowserDeliveryAdapter):
+        async def submit(self, context):
+            receipt = await super().submit(context)
+            # The local page can present verification just after a receipt is
+            # observed, before the coordinator starts its read-only lookup.
+            await self.page.evaluate("""() => {
+                const prompt = document.createElement('div');
+                prompt.dataset.challenge = 'auth';
+                prompt.textContent = '实名验证';
+                document.body.append(prompt);
+            }""")
+            return receipt
     selectors = replace(EDITORS[site.platform],
         tag_search="#tag-search", tag_candidates="#topics button", selected_tags="#tags > span",
         cover_input="#cover", collection="#collection",
@@ -157,10 +189,15 @@ def fixture_adapter(service, site: CreatorSite, *, mutate_after_save: str | None
             "ownership", "ai_usage", "repost_source", "originality_rights", "repost_authorized")},
         challenge="[data-challenge]:visible", unknown_dialog="[role='dialog']:visible",
     )
-    return BrowserDeliveryAdapter(
+    adapter_type = ChallengeBeforeReconcileAdapter if site.mode == "auth-before-reconcile" else BrowserDeliveryAdapter
+    return adapter_type(
         service.runtime_dir,
         lambda: create_port(site.platform, selectors=selectors, edit_url=site.url, works_url=site.url,
-                            evidence=FixtureEvidence(),
+                            evidence=(SlowCancelledReceiptEvidence()
+                                      if site.mode == "auth-after-submit-no-receipt-slow-cancel"
+                                      else FailingCancelledReceiptEvidence()
+                                      if site.mode == "auth-after-submit-no-receipt-raises-on-cancel"
+                                      else FixtureEvidence()),
                             note_selectors=(replace(selectors, upload=NOTE_EDITORS[site.platform].upload)
                                             if site.platform in NOTE_EDITORS else None)),
         session_factory=lambda context: Session(context, launch_options={

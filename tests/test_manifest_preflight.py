@@ -90,6 +90,7 @@ def test_replaced_media_fails_after_claim_without_platform_submission(tmp_path):
     manifest = make_manifest(tmp_path)
     job = service.enqueue(manifest)
     Path(manifest["media"][0]).write_bytes(VIDEO_BYTES + b"replaced")
+    assert service.enqueue(manifest) == job
     target = RecordingTarget()
 
     result = asyncio.run(service.run_once(adapters={"douyin": target}, job_id=job["job_id"]))

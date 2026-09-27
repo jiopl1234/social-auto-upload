@@ -10,6 +10,16 @@ from urllib.parse import urlencode
 from orchestrator.errors import TaskError
 
 
+def _consume_observation(task: asyncio.Task[Any]) -> None:
+    # A receipt observer may finish after a challenge cancelled it. Consume
+    # late driver exceptions without logging browser or session details.
+    if not task.cancelled():
+        try:
+            task.exception()
+        except BaseException:
+            pass
+
+
 class PageEvidence(Protocol):
     verification_scope: str
     async def identify_account(self, page: Any) -> str: ...
@@ -49,6 +59,7 @@ class DomPagePort:
         self.verification_scope = evidence.verification_scope if evidence is not None else "unverified"
         self.submitted = False
         self.submit_button: Any = None
+        self.receipt_task: asyncio.Task[dict | None] | None = None
 
     def _evidence(self) -> PageEvidence:
         if self.evidence is None:
@@ -181,7 +192,24 @@ class DomPagePort:
             raise TaskError("INVALID_STATE", "Final action was already attempted")
         self.submitted = True
         await self.submit_button.click(timeout=0)
-        return await self._evidence().receipt(page)
+        receipt = asyncio.create_task(self._evidence().receipt(page))
+        self.receipt_task = receipt
+        receipt.add_done_callback(_consume_observation)
+        try:
+            while True:
+                # A challenge can appear only after the click, while the
+                # receipt is still pending or at the same time as the receipt.
+                await self.check_challenge(page)
+                if receipt.done():
+                    observed = await receipt
+                    await self.check_challenge(page)
+                    return observed
+                await asyncio.sleep(0.05)
+        finally:
+            if not receipt.done():
+                receipt.cancel()
+                # The coordinator tracks this task and fences the account if
+                # it has not settled by the end of bounded browser cleanup.
 
     async def list_works(self, page: Any, content_type: str) -> list[dict]:
         return await self._evidence().list_works(page, content_type)
