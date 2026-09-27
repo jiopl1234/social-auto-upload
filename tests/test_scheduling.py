@@ -235,6 +235,103 @@ def test_clock_reversal_defers_then_reaches_attempt_limit_without_submission(tmp
     assert asyncio.run(service.run_once(adapters={"douyin": target}, job_id=job["job_id"], max_attempts=2)) == exhausted
 
 
+@pytest.mark.parametrize("max_attempts, expected_status, expected_attempt", [
+    (2, "QUEUED", "DEFERRED"),
+    (1, "FAILED_PRE_SUBMIT", "FAILED_PRE_SUBMIT"),
+])
+def test_cancelling_clock_rollback_cleanup_stops_pending_executor(
+    tmp_path, max_attempts, expected_status, expected_attempt,
+):
+    due = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc)
+    early = datetime(2030, 1, 1, 11, 59, tzinfo=timezone.utc)
+    now = [due]
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    database = tmp_path / "jobs.sqlite3"
+    service = TaskService(database, runtime_dir=tmp_path / "runtime",
+                          media_roots=[media_root], clock=lambda: now[0])
+    bind_test_account(service, tmp_path, "douyin", "creator")
+    first = service.enqueue(make_manifest(
+        tmp_path, key="first", run_at={"local": "2030-01-01T12:00:00", "timezone": "UTC"},
+    ))
+    second = service.enqueue(make_manifest(tmp_path, key="second"))
+
+    class LocalTarget:
+        def __init__(self):
+            self.closing = asyncio.Event()
+            self.release_close = asyncio.Event()
+            self.defer_first = True
+            self.active = None
+            self.writes = []
+
+        async def prepare(self, context):
+            self.active = context.job_id
+            if context.job_id == first["job_id"] and self.defer_first:
+                now[0] = early
+            return readback_metadata(context.manifest)
+
+        async def submit(self, context):
+            self.writes.append(context.job_id)
+            return {"content_id": context.job_id}
+
+        async def reconcile(self, context):
+            return [{
+                "platform": "douyin", "account_id": "douyin:creator", "content_type": "video",
+                "content_id": context.job_id, "platform_result": "PUBLISHED", "source": "work_detail",
+                "created_at": now[0].isoformat(), "metadata": readback_metadata(context.manifest),
+            }]
+
+        async def close(self):
+            if self.active == first["job_id"] and self.defer_first:
+                self.closing.set()
+                await self.release_close.wait()
+
+    target = LocalTarget()
+
+    async def cancel_during_deferred_cleanup():
+        running = asyncio.create_task(service.run_pending(adapters={"douyin": target}, max_attempts=max_attempts))
+        await asyncio.wait_for(target.closing.wait(), timeout=5)
+        running.cancel()
+        target.release_close.set()
+        return await asyncio.wait_for(running, timeout=5)
+
+    results = asyncio.run(cancel_during_deferred_cleanup())
+    assert [job["job_id"] for job in results] == [first["job_id"]]
+    deferred = results[0]
+    assert deferred["status"] == expected_status and deferred["submission"] == "NOT_SUBMITTED"
+    if expected_status == "QUEUED":
+        assert deferred["error"] is None
+    else:
+        assert deferred["error"]["code"] == "ATTEMPT_LIMIT"
+    assert any(item["code"] == "CANCELLED" for item in deferred["warnings"])
+    assert service.attempts(first["job_id"])[0]["status"] == expected_attempt
+    assert service.status(second["job_id"])["status"] == "QUEUED"
+    assert service.attempts(second["job_id"]) == []
+    assert target.writes == []
+
+    restarted = TaskService(database, runtime_dir=tmp_path / "runtime",
+                            media_roots=[media_root], clock=lambda: now[0])
+    assert restarted.status(first["job_id"]) == deferred
+    schedule_events = [event for event in restarted.events(first["job_id"]) if event["stage"] == "schedule"]
+    assert len(schedule_events) == 1
+    assert any(item["code"] == "CANCELLED" for item in schedule_events[0]["details"]["warnings"])
+    resumed = asyncio.run(restarted.run_pending(adapters={"douyin": target}, max_attempts=max_attempts))
+    assert [job["job_id"] for job in resumed] == [second["job_id"]]
+    assert resumed[0]["status"] == "COMPLETED"
+    assert target.writes == [second["job_id"]]
+
+    if expected_status == "FAILED_PRE_SUBMIT":
+        assert restarted.status(first["job_id"]) == deferred
+        return
+    now[0] = due
+    target.defer_first = False
+    later = asyncio.run(restarted.run_pending(adapters={"douyin": target}))
+    assert [job["job_id"] for job in later] == [first["job_id"]]
+    assert later[0]["status"] == "COMPLETED"
+    assert not any(item["code"] == "CANCELLED" for item in later[0]["warnings"])
+    assert target.writes == [second["job_id"], first["job_id"]]
+
+
 def test_unknown_commit_recovery_ignores_schedule_after_clock_moves_back(tmp_path):
     now = [datetime(2029, 12, 31, 16, 15, tzinfo=timezone.utc)]
     media_root = tmp_path / "media"

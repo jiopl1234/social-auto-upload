@@ -664,10 +664,14 @@ class Store:
             raise
         return reference
 
-    def defer_preparation(self, job_id: str, owner_token: str, max_attempts: int = 2) -> dict:
+    def defer_preparation(self, job_id: str, owner_token: str, max_attempts: int = 2,
+                          *, warnings: list[dict] | None = None) -> dict:
         """Release an active pre-submit attempt when its scheduled time is future again."""
         if type(max_attempts) is not int or not 1 <= max_attempts <= 5:
             raise TaskError("INVALID_INPUT", "max_attempts must be an integer from 1 to 5", field="max_attempts")
+        # Deferral changes scheduling state, not the diagnostics of this attempt.
+        # In particular, a cleanup cancellation must still stop run_pending.
+        warnings = diagnostic_warnings(warnings)
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
@@ -681,8 +685,8 @@ class Store:
                                    (now, job["attempt_id"]))
                 connection.execute(
                     """UPDATE jobs SET status = 'FAILED_PRE_SUBMIT', error_json = ?,
-                       warnings_json = '[]', actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
-                    (_canonical_json(error), now, job_id),
+                       warnings_json = ?, actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
+                    (_canonical_json(error), _canonical_json(warnings), now, job_id),
                 )
                 status, details = "FAILED_PRE_SUBMIT", {"error": error}
             else:
@@ -690,13 +694,13 @@ class Store:
                                    (now, job["attempt_id"]))
                 connection.execute(
                     """UPDATE jobs SET status = 'QUEUED', attempt_id = NULL, error_json = NULL,
-                       warnings_json = '[]', actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
-                    (now, job_id),
+                       warnings_json = ?, actual_metadata_json = NULL, updated_at = ? WHERE job_id = ?""",
+                    (_canonical_json(warnings), now, job_id),
                 )
                 status, details = "QUEUED", {"reason": "NOT_DUE"}
             connection.execute(
                 "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, 'schedule', ?, ?)",
-                (job_id, job["attempt_id"], status, now, _canonical_json(details)),
+                (job_id, job["attempt_id"], status, now, _canonical_json({**details, "warnings": warnings})),
             )
             return self._job_from_row(self._job_row(connection, job_id))
 

@@ -302,7 +302,8 @@ async def run_once(
                                                  error=error.as_dict() if error else None, warnings=warnings, pause_reason=pause_reason)
                 paused = pause_reason is not None
                 if error is not None and error.code == "NOT_DUE" and not paused:
-                    return store.defer_preparation(job["job_id"], lease.token, max_attempts=max_attempts)
+                    return store.defer_preparation(job["job_id"], lease.token, max_attempts=max_attempts,
+                                                   warnings=warnings)
                 status = ("BLOCKED" if paused else "CANCELLED" if error and error.code == "CANCELLED"
                           else "FAILED_PRE_SUBMIT" if error else "READY")
                 return store.finish_preparation(job["job_id"], lease.token, status=status,
