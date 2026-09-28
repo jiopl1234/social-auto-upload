@@ -4,7 +4,7 @@
 
 真实账号的 CLI 只读核对和仅准备已于 2026-09-27 通过。封面会等待平台检测通过及横竖裁剪成品后再校验；检测未完成或未通过时有界停止，不继续发表。
 
-能力报告中抖音视频为 `available_limited`、`can_execute=true`。`production_verified=false` 保留这版 CLI 完整真实提交尚未验收的事实；其余四条路径仍为 `restricted`。见 [验证记录](audit/douyin-live-video-2026-09-27.md)。
+能力报告中抖音视频为 `available_limited`、`can_execute=true`。真实提交及原任务只读恢复已确认一次公开发布；`production_verified=false` 保留验证后同一进程自动续行尚未验收的事实，其余四条路径仍为 `restricted`。见 [验证记录](audit/douyin-live-video-2026-09-27.md)及[最新重测](audit/douyin-verification-wait-2026-09-27.md#用户明确要求的真实-cli-重测)。
 
 ## 登录和绑定
 
@@ -76,7 +76,7 @@ uv run --frozen --offline --no-sync sau jobs --media-root C:/Users/Chinese/Video
 
 取消、关闭窗口、等待超时、身份改变或缺少回执时，结果保持保守，账号保持暂停，不自动重发。该选项仅处理本次发表后的验证；发表前要求重新登录时仍按原有方式退出。已经关闭的旧浏览器无法由此选项恢复，已提交任务使用该选项会被拒绝，应按下文只读恢复。
 
-该流程已经过本地浏览器故障测试，真实抖音的完整续行尚未验收，`production_verified=false` 不变。原 `2.mp4` 的未知提交任务不能换键重发。
+该流程已经过本地浏览器故障测试。一次用户明确要求的真实重测已公开发表，并通过原任务只读恢复得到确认；验证后的未知弹窗仍使同一进程自动续行未通过，`production_verified=false` 不变。见[真实重测记录](audit/douyin-verification-wait-2026-09-27.md#用户明确要求的真实-cli-重测)。程序不会自动将未知提交换键重发。
 
 ## 只读检查和恢复
 
