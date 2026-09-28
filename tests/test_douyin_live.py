@@ -46,6 +46,48 @@ def test_cli_verification_notice_keeps_json_output_and_confirms_one_submission(t
         assert service.attempts(job['job_id'])[0]['submit_count'] == 1
 
 
+@pytest.mark.parametrize('mode,confirmed', [('manual-success-overlay', True),
+                                            ('manual-success-overlay-missing-work', False),
+                                            ('manual-success-overlay-no-secondary-identity', False),
+                                            ('manual-unknown-without-receipt', False)])
+def test_post_verification_unknown_dialog_uses_receipted_secondary_read_only_page(tmp_path, mode, confirmed):
+    from tests.douyin_fixture import DouyinSite
+
+    service = make_service(tmp_path)
+    job = service.enqueue(make_manifest(tmp_path))
+    notices = []
+    with DouyinSite(mode) as site:
+        site.hide_works = mode == 'manual-success-overlay-missing-work'
+        result = asyncio.run(service.run_once(adapters={'douyin': site.adapter(service,
+            verification_wait=8, on_verification=lambda state: (
+                notices.append(state), site.verification_released.set() if state == 'waiting' else None))},
+            job_id=job['job_id']))
+        assert result is not None
+        assert service.attempts(job['job_id'])[0]['submit_count'] == 1
+        if confirmed:
+            assert result['status'] == 'COMPLETED', result
+            assert result['platform_result'] == 'PUBLISHED'
+            assert result['submission'] == 'CONFIRMED'
+            assert result['content_id'] == '7690181573743742254'
+            assert site.readonly_reused_editor and not any(site.readonly_reused_editor)
+            assert notices == ['waiting', 'verified']
+            assert len(site.submissions) == 1
+            assert next(a for a in service.accounts() if a['platform'] == 'douyin')['status'] == 'READY'
+        else:
+            assert result['status'] == 'UNKNOWN_COMMIT', result
+            if mode == 'manual-unknown-without-receipt':
+                assert result['error']['code'] == 'UI_CHANGED'
+                assert site.readonly_reused_editor == []
+                assert len(site.submissions) == 0
+                assert next(a for a in service.accounts() if a['platform'] == 'douyin')['status'] == 'UI_CHANGED'
+            else:
+                assert site.readonly_reused_editor and not any(site.readonly_reused_editor)
+                assert len(site.submissions) == 1
+                assert next(a for a in service.accounts() if a['platform'] == 'douyin')['status'] == 'AUTH_REQUIRED'
+                if mode == 'manual-success-overlay-no-secondary-identity':
+                    assert 'expired' in notices
+
+
 @pytest.mark.parametrize('mode', ['manual-verification', 'receipt-verification', 'manual-worklist'])
 def test_visible_verification_continues_same_submission_and_restores_account(tmp_path, mode):
     from tests.douyin_fixture import DouyinSite

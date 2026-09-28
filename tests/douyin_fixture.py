@@ -45,7 +45,7 @@ HTML = r"""<!doctype html><meta charset="utf-8"><body>
 const mode = __MODE__;
 const api = path => fetch(path).then(r=>r.json());
 const verifyPerson = __VERIFY__;
-api('/web/api/media/user/info/');
+if(mode!=='manual-success-overlay-no-secondary-identity' || !location.pathname.includes('manage')) api('/web/api/media/user/info/');
 if(mode==='rich-editor') {
   const body=document.querySelector('[contenteditable]');
   body.addEventListener('beforeinput', event=>{
@@ -118,7 +118,15 @@ document.querySelector('#publish').onclick=async()=>{
   const payload={title:document.querySelector('input[placeholder]').value,body:document.querySelector('[contenteditable]').innerText};
   if(mode.startsWith('manual-') && mode!=='manual-worklist') await verifyPerson(mode!=='manual-stale-identity');
   if(mode==='challenge') {const dialog=document.createElement('article');dialog.className='uc-ui-verify_qr-verify';dialog.textContent='为保障账号安全，请使用抖音 APP扫码验证';document.body.append(dialog);}
+  if(mode==='manual-unknown-without-receipt') {
+    const dialog=document.createElement('div');dialog.setAttribute('role','dialog');
+    dialog.textContent='未识别的后续提示';document.body.append(dialog);return;
+  }
   await fetch('/web/api/media/aweme/create_v2/',{method:'POST',body:JSON.stringify(payload)});
+  if(mode.startsWith('manual-success-overlay')) {
+    const dialog=document.createElement('div');dialog.setAttribute('role','dialog');
+    dialog.textContent='未识别的后续提示';document.body.append(dialog);
+  }
 };
 }
 </script>"""
@@ -130,6 +138,7 @@ class DouyinSite:
         self.hide_works = False
         self.verification_released = threading.Event()
         self.page: Any = None
+        self.readonly_reused_editor: list[bool] = []
         site = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -227,6 +236,11 @@ class DouyinSite:
             verification_scope = "local_fixture"
             origin = site.origin
             upload_origin = site.origin
+
+            async def navigate(self, page, content_type, *, readonly):
+                if readonly:
+                    site.readonly_reused_editor.append(page is site.page)
+                await super().navigate(page, content_type, readonly=readonly)
 
             async def submit_once(self, page):
                 receipt = await super().submit_once(page)

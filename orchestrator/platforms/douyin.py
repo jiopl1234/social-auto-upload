@@ -39,7 +39,6 @@ class DouyinVideoPort(DomPagePort):
             works_url=self.origin + "/creator-micro/content/manage")
         self.verification_scope = scope
         self.pending_responses: deque[Any] = deque(maxlen=32)
-        self.observing = False
         self.uploading = False
         self.commit: dict | None = None
         self.asset: Mapping[str, Any] | None = None
@@ -101,10 +100,9 @@ class DouyinVideoPort(DomPagePort):
     async def navigate(self, page: Any, content_type: str, *, readonly: bool) -> None:
         if content_type != "video":
             raise TaskError("UNSUPPORTED", "Requested capability is unsupported", field="content_type")
-        if not self.observing:
+        if self.page is not page:
             self.page = page
             page.on("response", self._observe)
-            self.observing = True
         self.works = None
         await page.goto(self.works_url if readonly else self.edit_url, wait_until="domcontentloaded", timeout=0)
 

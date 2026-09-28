@@ -55,6 +55,7 @@ class BrowserDeliveryAdapter:
         self.attempt_id: str | None = None
         self.submission_started = False
         self.verification_deadline: float | None = None
+        self.secondary_readonly_page = False
         self.verified_for: str | None = None
         self.cleanup_warnings: list[dict] = []
 
@@ -88,6 +89,7 @@ class BrowserDeliveryAdapter:
         self.port, self.attempt_id = port, context.attempt_id
         self.submission_started = False
         self.verification_deadline = None
+        self.secondary_readonly_page = False
         self.verified_for = None
         self.cleanup_warnings.clear()
         session = self.session_factory(context)
@@ -212,6 +214,10 @@ class BrowserDeliveryAdapter:
                         self.on_verification("verified")
                     return receipt
                 except TaskError as exc:
+                    if (exc.code == "UI_CHANGED" and not self.secondary_readonly_page
+                            and isinstance(getattr(port, "observed_receipt", None), dict)):
+                        await self._open_secondary_readonly_page(context, port)
+                        continue
                     if exc.code != "AUTH_REQUIRED":
                         raise
                     port.require_fresh_identity()
@@ -227,9 +233,28 @@ class BrowserDeliveryAdapter:
                 self.on_verification("expired")
             raise TaskError("AUTH_REQUIRED", "Account verification or login is required", field="verification") from None
 
+    async def _open_secondary_readonly_page(self, context: ExecutionContext, port: PagePort) -> None:
+        """Observe a receipted work without navigating away from an unknown editor dialog."""
+        session = self.session
+        browser_context = session.browser_context if session is not None else None
+        if browser_context is None:
+            raise TaskError("INVALID_STATE", "Browser session is unavailable")
+        context.assert_owner()
+        require_identity = getattr(port, "require_fresh_identity", None)
+        if callable(require_identity):
+            require_identity()
+
+        async def open_and_navigate() -> None:
+            page = await browser_context.new_page()
+            self.secondary_readonly_page = True
+            self.page = page
+            await port.navigate(page, str(context.manifest["content_type"]), readonly=True)
+
+        await context.run_stage("navigation", open_and_navigate)
+
     async def reconcile(self, context: ExecutionContext) -> list[dict]:
         port, page = await self._open(context)
-        if self.submission_started:
+        if self.submission_started and not self.secondary_readonly_page:
             # On this attempt the editor is still open. Inspect it before a
             # read-only navigation removes a post-click verification prompt.
             # Recovery opens a blank page and has no editor to inspect yet.
@@ -239,7 +264,8 @@ class BrowserDeliveryAdapter:
                     break
                 except TaskError as exc:
                     await self._handle_verification(context, port, exc)
-        await context.run_stage("navigation", lambda: port.navigate(page, str(context.manifest["content_type"]), readonly=True))
+        if not self.secondary_readonly_page:
+            await context.run_stage("navigation", lambda: port.navigate(page, str(context.manifest["content_type"]), readonly=True))
         while True:
             try:
                 await self._guard(context)
