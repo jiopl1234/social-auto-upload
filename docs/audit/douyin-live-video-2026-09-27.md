@@ -24,8 +24,24 @@
 - Standards 与 Spec 独立复审后均无剩余发现。本轮额外修复了封面检测在最终读回时失效仍提交、已知提示被安全验证替换或遮住时未暂停账号两项缺陷；三个故障回归先失败、修复后通过。预览等待使用兼容 Python 3.10 的 `asyncio.wait_for`，未在本机运行 Python 3.10。此前修复包含只准备任务继续执行、认证响应暂停账号和所有权丢失后的只读清理。审查不等于真实平台验收。
 - 2026-09-27 14:26:12 UTC，刷新登录后的真实 CLI `inspect-work` 返回 `FOUND/PUBLISHED`，正确核对已绑定账号及原作品。
 - 2026-09-27 14:52:26 UTC，真实 CLI `run --prepare-only --headed` 返回 `READY/NOT_SUBMITTED`，标题、正文、视频摘要、空话题/合集/声明均一致，无错误或警告。账号保持 READY；attempt 的 `submit_count=0`、`submission_started_at=null`、`receipt_id=null`。浏览器正常清理。记录位于独立本地验收数据库，不能把这些仅准备记录作为下一次公开发布任务。
-- 没有再次公开发表原视频。CLI 完整真实提交未执行，因此 `production_verified=false`；`can_execute=true` 仅开放文档所列范围，不保证无风控或无需验证。
+- 没有再次公开发表原视频。随后对另一条用户授权的原创、非 AI 视频执行了真实 CLI 提交，结果见下文；完整交付仍未验收通过，因此 `production_verified=false`。`can_execute=true` 仅开放文档所列范围，不保证无风控或无需验证。
 
-本轮 codebase-memory MCP 返回 `Transport closed`，代码审查回退当前源码及本地故障夹具，未声称完成图覆盖验证。
+## 第二条视频的真实 CLI 提交
+
+2026-09-28 04:34 UTC（本地 2026-09-27），用户授权用新版 CLI 公开发布 `2.mp4`，并确认原创、无 AI，允许代拟文案。执行使用现有 `douyin_main` 账号，限定单一任务及一次尝试：
+
+```powershell
+uv run --frozen --offline --no-sync sau jobs --media-root C:/Users/Chinese/Videos run --job 53ac89bdd52e4d73b3d52f36e57170aa --headed --max-attempts 1
+```
+
+- 真实上传、封面及文字校验通过，任务从 READY 进入 SUBMITTING。
+- 最终动作后检测到 `AUTH_REQUIRED`。持久化 `submit_count=1`、`receipt_id=null`，任务为 `UNKNOWN_COMMIT/MAY_HAVE_SUBMITTED`；账号暂停，浏览器清理完成。没有重新入队或再次提交。
+- 用户没有收到手机验证提示。随后只读查询仍能核对已绑定账号和此前作品，说明普通登录仍有效，不能把这次发表阶段的验证当作普通登录过期处理。
+- 04:39 UTC 的独立只读核查列出 1 条作品，没有匹配这次上传视频 ID 或标题的作品。这只表示当前列表没有找到，不足以断言远端未接收，所以保留未知提交状态。
+- 本次未确认公开发表成功。当前 CLI 遇到验证会有界暂停并关闭浏览器，尚不支持保留同一发表页面供本人完成验证后继续核对；真实端到端发布验收仍未通过。
+
+本次任务和提交记录保存在默认任务数据库，私有核查记录在 `.scratch/douyin-live-video/acceptance/`，不提交到仓库。
+
+准备验收阶段的 codebase-memory MCP 返回 `Transport closed`，当时代码审查回退源码及本地故障夹具。本次真实提交诊断已恢复索引访问，对标记为 `metadata_changed` 的相关代码再次读取源码核对。
 
 未提交 Cookie、QR、签名参数或原始响应。离线测试账号、视频和数据均为合成夹具。
