@@ -108,6 +108,7 @@ _KNOWN_FIELDS = frozenset({
     "run_at.local", "run_at.timezone", "schema_version", "session_save",
     "session_source", "session_path", "stage", "submit", "tags", "title",
     "unverified", "upload", "verification_code", "cleanup", "navigation", "metadata",
+    "verification", "verification_wait",
 })
 _MEDIA_FIELD = re.compile(r"media\[[0-9]{1,3}\](?:\.(?:kind|sha256))?\Z")
 _COVER_FIELD = re.compile(r"cover\.(?:kind|sha256)\Z")
@@ -198,6 +199,9 @@ def diagnostic_event(stage: Any, details: Any) -> dict[str, Any]:
     if not isinstance(details, Mapping):
         return {}
     safe: dict[str, Any] = {}
+    state = details.get("verification_state")
+    if stage == "verification" and isinstance(state, str) and state in {"waiting", "verified", "expired"}:
+        safe["verification_state"] = state
     if details.get("driver") == "patchright":
         safe["driver"] = "patchright"
     for key in ("driver_version", "driver_pin", "browser_version", "capability_version"):

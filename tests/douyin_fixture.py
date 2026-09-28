@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 import struct
 import zlib
+from typing import Any
 from urllib.parse import urlsplit
 
 from orchestrator.browser import BrowserSession
@@ -18,6 +19,13 @@ def cover_png(width, height):
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
             + chunk(b'IDAT', zlib.compress((b'\0' + b'\x80' * (3 * width)) * height)) + chunk(b'IEND', b''))
+
+
+VERIFY_SCRIPT = r"""async (refresh = true) => {
+  const dialog=document.createElement('article');dialog.className='uc-ui-verify_qr-verify';dialog.textContent='安全验证：请在当前页面完成本人验证';document.body.append(dialog);
+  while(!(await fetch('/verification').then(r=>r.json())).approved) await new Promise(r=>setTimeout(r,50));
+  dialog.remove();if(refresh) await fetch('/web/api/media/user/info/');
+}"""
 
 
 HTML = r"""<!doctype html><meta charset="utf-8"><body>
@@ -36,6 +44,7 @@ HTML = r"""<!doctype html><meta charset="utf-8"><body>
 <script>
 const mode = __MODE__;
 const api = path => fetch(path).then(r=>r.json());
+const verifyPerson = __VERIFY__;
 api('/web/api/media/user/info/');
 if(mode==='rich-editor') {
   const body=document.querySelector('[contenteditable]');
@@ -64,7 +73,8 @@ if(location.pathname.includes('manage')) {
       }
     }; document.body.append(tip);
   }
-  api('/janus/douyin/creator/pc/work_list');
+  if(mode==='manual-worklist' || mode==='manual-repeat') verifyPerson().then(()=>api('/janus/douyin/creator/pc/work_list'));
+  else api('/janus/douyin/creator/pc/work_list');
 } else {
 document.querySelector('#upload').onchange=async e=>{
   const file=e.target.files[0];
@@ -106,6 +116,7 @@ document.querySelector('#cover').onclick=()=>{
 };
 document.querySelector('#publish').onclick=async()=>{
   const payload={title:document.querySelector('input[placeholder]').value,body:document.querySelector('[contenteditable]').innerText};
+  if(mode.startsWith('manual-') && mode!=='manual-worklist') await verifyPerson(mode!=='manual-stale-identity');
   if(mode==='challenge') {const dialog=document.createElement('article');dialog.className='uc-ui-verify_qr-verify';dialog.textContent='为保障账号安全，请使用抖音 APP扫码验证';document.body.append(dialog);}
   await fetch('/web/api/media/aweme/create_v2/',{method:'POST',body:JSON.stringify(payload)});
 };
@@ -117,6 +128,8 @@ class DouyinSite:
     def __init__(self, mode="normal"):
         self.mode, self.submissions, self.works = mode, [], []
         self.hide_works = False
+        self.verification_released = threading.Event()
+        self.page: Any = None
         site = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -137,14 +150,19 @@ class DouyinSite:
 
             def do_GET(self):
                 path = urlsplit(self.path).path
+                if path == '/verification':
+                    return self.send({'approved': site.verification_released.is_set()})
                 if path == "/web/api/media/user/info/":
-                    return self.send({"status_code": 0, "user": {"uid": "other" if site.mode == "wrong-account" else "douyin:creator"}})
+                    wrong = site.mode == "wrong-account" or (site.mode == "manual-wrong-account" and site.verification_released.is_set())
+                    return self.send({"status_code": 0, "user": {"uid": "other" if wrong else "douyin:creator"}})
                 if path == "/janus/douyin/creator/pc/work_list":
                     if site.mode == "worklist-auth":
                         return self.send({"status_code": 8, "status_msg": "用户未登录"})
                     return self.send({"status_code": 0, "aweme_list": [] if site.hide_works else site.works})
                 if path.startswith("/creator-micro/"):
-                    return self.send(HTML.replace("__MODE__", json.dumps(site.mode)), "text/html; charset=utf-8")
+                    if site.mode == 'manual-repeat' and path.endswith('/manage'):
+                        site.verification_released.clear()
+                    return self.send(HTML.replace("__MODE__", json.dumps(site.mode)).replace('__VERIFY__', VERIFY_SCRIPT), "text/html; charset=utf-8")
                 if path == "/tos-cn-v/fixture-video":
                     return self.send((Path(__file__).parent / "fixtures/douyin-preview.webm").read_bytes(), "video/webm")
                 if path in {"/portrait-cover", "/landscape-cover", "/changed-cover", "/uncropped-cover"}:
@@ -181,7 +199,7 @@ class DouyinSite:
                     site.works.append(dict(site.works[-1]))
                 if site.mode == "submit-auth":
                     return self.send({"status_code": 8, "status_msg": "用户未登录"})
-                return self.send({"status_code": 0, **({} if site.mode in {"lost-receipt", "challenge"}
+                return self.send({"status_code": 0, **({} if site.mode in {"lost-receipt", "challenge", "manual-lost-receipt"}
                     else {"item_id": "7690181573743742254"})})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -197,7 +215,11 @@ class DouyinSite:
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def adapter(self, service):
+    async def close_window(self):
+        assert self.page is not None
+        await self.page.close()
+
+    def port(self):
         from orchestrator.platforms.douyin import DouyinVideoPort
 
         site = self
@@ -206,9 +228,21 @@ class DouyinSite:
             origin = site.origin
             upload_origin = site.origin
 
+            async def submit_once(self, page):
+                receipt = await super().submit_once(page)
+                if site.mode == 'receipt-verification':
+                    await page.evaluate(f'void ({VERIFY_SCRIPT})()')
+                return receipt
+
+        return ReplayPort()
+
+    def adapter(self, service, **options):
+        site = self
+
         class ReplayAdapter(BrowserDeliveryAdapter):
             async def prepare(self, context):
                 result = await super().prepare(context)
+                site.page = self.page
                 # A local page change after successful preparation must be
                 # caught by the public service's final readiness check.
                 if site.mode == "removed-cover-after-ready":
@@ -219,6 +253,6 @@ class DouyinSite:
                     await self.page.locator('.cover-check').evaluate("el=>el.textContent='封面检测未通过'")
                 return result
 
-        return ReplayAdapter(service.runtime_dir, ReplayPort,
+        return ReplayAdapter(service.runtime_dir, self.port, **options,
             session_factory=lambda context: BrowserSession(context, launch_options={
                 "headless": True, "executable_path": str(_installed_chromium_executable())}))

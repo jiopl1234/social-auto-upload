@@ -840,6 +840,28 @@ class Store:
                 raise TaskError("INVALID_STATE", "No active submission accepts this receipt")
             connection.execute("UPDATE attempts SET receipt_id = ? WHERE attempt_id = ?", (content_id, job["attempt_id"]))
 
+    def record_verification(self, job_id: str, owner_token: str, state: str) -> None:
+        """Persist this owner's bounded human-verification progress and pause."""
+        if state not in {"waiting", "verified", "expired"}:
+            raise TaskError("INVALID_INPUT", "Unknown verification state", field="verification")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            if job["status"] != "SUBMITTING":
+                raise TaskError("INVALID_STATE", "Verification requires the active submission")
+            if state == "verified":
+                attempt = connection.execute("SELECT receipt_id FROM attempts WHERE attempt_id = ?", (job["attempt_id"],)).fetchone()
+                if attempt is None or not attempt["receipt_id"]:
+                    raise TaskError("INVALID_STATE", "Verification requires the existing submission receipt")
+            else:
+                self._pause_account(connection, job["platform"], job["account"], {
+                    "code": "AUTH_REQUIRED", "message": "Account authentication is required", "field": "verification",
+                })
+            connection.execute(
+                "INSERT INTO events (job_id, attempt_id, status, stage, created_at, details_json) VALUES (?, ?, ?, 'verification', ?, ?)",
+                (job_id, job["attempt_id"], job["status"], self._utc_now(), _canonical_json({"verification_state": state})),
+            )
+
     def current_attempt(self, job_id: str) -> dict:
         with self.transaction() as connection:
             job = self._job_row(connection, job_id)
@@ -899,4 +921,16 @@ class Store:
                                })))
             if pause_reason is not None:
                 self._pause_account(connection, job["platform"], job["account"], pause_reason)
+            elif work is not None and error is None and not warnings:
+                verification = connection.execute(
+                    "SELECT details_json FROM events WHERE attempt_id = ? AND stage = 'verification' ORDER BY id DESC LIMIT 1",
+                    (job["attempt_id"],),
+                ).fetchone()
+                if verification is not None and self._decode(verification["details_json"]) == {"verification_state": "verified"}:
+                    reason = _canonical_json(diagnostic_error({"code": "AUTH_REQUIRED", "field": "verification"}))
+                    connection.execute(
+                        "UPDATE accounts SET status = 'READY', pause_reason = NULL, updated_at = ? "
+                        "WHERE platform = ? AND account = ? AND expected_id = ? AND status = 'AUTH_REQUIRED' AND pause_reason = ?",
+                        (now, job["platform"], job["account"], work["account_id"], reason),
+                    )
             return self._job_from_row(self._job_row(connection, job_id))

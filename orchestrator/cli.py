@@ -42,6 +42,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     run.add_argument("--headed", action="store_true", help="Show the task browser")
     run.add_argument("--prepare-only", action="store_true", help="Check and prepare one job without publishing")
     run.add_argument("--max-attempts", type=int, choices=range(1, 6), default=2)
+    run.add_argument("--verification-wait", type=int, default=0, metavar="SECONDS",
+                     help="Keep one headed Douyin submission open for human verification (1-600 seconds)")
 
 
 def emit_error(error: TaskError) -> int:
@@ -85,10 +87,21 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = service.bind_account(args.account_platform, args.account, args.expected_id, args.session_source)
         elif args.action == "run":
             from orchestrator.platforms import default_adapters
+            from orchestrator.runtime import DEFAULT_LIMITS
 
+            wait = args.verification_wait
+            if not 0 <= wait <= 600 or (wait and (not args.headed or not args.job_id or args.prepare_only)):
+                raise TaskError("INVALID_INPUT", "Verification wait requires one headed delivery and 1-600 seconds",
+                                field="verification_wait")
             if args.prepare_only and not args.job_id:
                 raise TaskError("INVALID_INPUT", "Preparation requires one explicit job", field="action")
             selected = service.status(args.job_id) if args.job_id else None
+            if wait and selected is not None:
+                if selected["submission"] != "NOT_SUBMITTED":
+                    raise TaskError("INVALID_STATE", "An existing submission can only be recovered read-only",
+                                    field="verification_wait")
+                if selected["platform"] != "douyin" or selected["manifest"]["content_type"] != "video":
+                    raise TaskError("UNSUPPORTED", "Verification wait is only available for Douyin video", field="platform")
             if args.prepare_only and selected is not None and selected["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Preparation cannot resume a submitted task")
             if selected is not None:
@@ -109,9 +122,20 @@ async def dispatch(args: argparse.Namespace) -> int:
             enabled = [item for item in paths if item.get("can_execute", item["production_verified"])]
             if not enabled:
                 raise TaskError("UNSUPPORTED", "Live account and work evidence is not verified; inspect jobs capabilities")
-            all_adapters = default_adapters(service.runtime_dir, headed=args.headed, prepare_only=args.prepare_only)
+            def verification_notice(state: str) -> None:
+                messages = {
+                    "waiting": f"抖音要求本人验证，原浏览器窗口最多保留 {wait} 秒。请按页面提示完成验证，不要再次点击发表。",
+                    "verified": "已收到同次提交的回执并核对身份，正在确认作品结果。",
+                    "expired": "验证等待已到期，任务保持未知提交状态，不会自动重发。",
+                }
+                print(messages[state], file=sys.stderr, flush=True)
+
+            all_adapters = default_adapters(service.runtime_dir, headed=args.headed, prepare_only=args.prepare_only,
+                                            verification_wait=wait, on_verification=verification_notice if wait else None)
             adapters = {item["platform"]: all_adapters[item["platform"]] for item in enabled}
-            result = (await service.run_once(adapters=adapters, job_id=args.job_id, max_attempts=args.max_attempts) if args.job_id
+            limits = {stage: DEFAULT_LIMITS[stage] + wait for stage in ("submit", "reconcile")} if wait else None
+            result = (await service.run_once(adapters=adapters, job_id=args.job_id, max_attempts=args.max_attempts,
+                                            limits=limits) if args.job_id
                       else {"jobs": await service.run_pending(adapters=adapters, max_attempts=args.max_attempts)})
         else:
             raise TaskError("INVALID_INPUT", "Unknown task action", field="action")

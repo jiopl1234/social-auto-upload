@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlsplit
@@ -39,8 +40,13 @@ def _origin(url: str) -> tuple[str, str | None, int | None]:
 
 class BrowserDeliveryAdapter:
     def __init__(self, runtime_dir: Path, port_factory: Callable[[], PagePort], *,
-                 session_factory: Callable[[ExecutionContext], BrowserSession] | None = None):
+                 session_factory: Callable[[ExecutionContext], BrowserSession] | None = None,
+                 verification_wait: float = 0, on_verification: Callable[[str], None] | None = None):
+        if type(verification_wait) not in (int, float) or not math.isfinite(verification_wait) or not 0 <= verification_wait <= 600:
+            raise TaskError("INVALID_INPUT", "Verification wait must be between 0 and 600 seconds", field="verification_wait")
         self.runtime_dir = Path(runtime_dir)
+        self.verification_wait = verification_wait
+        self.on_verification = on_verification
         self.port_factory = port_factory
         self.session_factory = session_factory or BrowserSession
         self.session: BrowserSession | None = None
@@ -48,6 +54,7 @@ class BrowserDeliveryAdapter:
         self.page: Any = None
         self.attempt_id: str | None = None
         self.submission_started = False
+        self.verification_deadline: float | None = None
         self.verified_for: str | None = None
         self.cleanup_warnings: list[dict] = []
 
@@ -80,9 +87,12 @@ class BrowserDeliveryAdapter:
             validator(context.manifest)
         self.port, self.attempt_id = port, context.attempt_id
         self.submission_started = False
+        self.verification_deadline = None
         self.verified_for = None
         self.cleanup_warnings.clear()
         session = self.session_factory(context)
+        if live and self.verification_wait and session.launch_options.get("headless", True):
+            raise TaskError("INVALID_INPUT", "Verification wait requires a visible browser", field="verification_wait")
         self.session = session
         session_path = managed_session_path(self.runtime_dir, port.platform, str(context.manifest["account"]))
         self.page = await session.open(session_path)
@@ -157,7 +167,10 @@ class BrowserDeliveryAdapter:
         # From here on, a click error or cancellation is conservatively unknown.
         self.submission_started = True
         try:
-            return await port.submit_once(self.page)
+            try:
+                return await port.submit_once(self.page)
+            except TaskError as exc:
+                return await self._handle_verification(context, port, exc)
         finally:
             receipt = getattr(port, "observed_receipt", None)
             if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str):
@@ -166,16 +179,73 @@ class BrowserDeliveryAdapter:
             if isinstance(observer, asyncio.Task):
                 context.budget.track(observer)
 
+    async def _handle_verification(self, context: ExecutionContext, port: PagePort, error: TaskError) -> dict:
+        from orchestrator.platforms.douyin import DouyinVideoPort
+
+        if (error.code != "AUTH_REQUIRED" or not self.verification_wait or not self.submission_started
+                or not isinstance(port, DouyinVideoPort)):
+            raise error
+        context.assert_owner()
+        clock = asyncio.get_running_loop().time
+        if self.verification_deadline is None:
+            self.verification_deadline = clock() + self.verification_wait
+        port.require_fresh_identity()
+        context.store.record_verification(context.job_id, context.lease.token, "waiting")
+        if self.on_verification is not None:
+            self.on_verification("waiting")
+
+        async def continue_submission() -> dict:
+            while True:
+                context.assert_owner()
+                try:
+                    await self._guard(context)
+                    receipt = await port.wait_for_receipt(self.page)
+                    await self._guard(context)
+                    if self.session is None:
+                        raise TaskError("INVALID_STATE", "Browser session is unavailable")
+                    await self.session.save_state(managed_session_path(self.runtime_dir, port.platform,
+                                                                       str(context.manifest["account"])))
+                    await self._guard(context)
+                    context.store.record_receipt(context.job_id, context.lease.token, receipt["content_id"])
+                    context.store.record_verification(context.job_id, context.lease.token, "verified")
+                    if self.on_verification is not None:
+                        self.on_verification("verified")
+                    return receipt
+                except TaskError as exc:
+                    if exc.code != "AUTH_REQUIRED":
+                        raise
+                    port.require_fresh_identity()
+                    await asyncio.sleep(.2)
+
+        # One deadline covers all repeated prompts and receipt observations.
+        # The caller's stage/total budget and cleanup reservation still govern.
+        try:
+            return await asyncio.wait_for(continue_submission(), timeout=max(0, self.verification_deadline - clock()))
+        except asyncio.TimeoutError:
+            context.store.record_verification(context.job_id, context.lease.token, "expired")
+            if self.on_verification is not None:
+                self.on_verification("expired")
+            raise TaskError("AUTH_REQUIRED", "Account verification or login is required", field="verification") from None
+
     async def reconcile(self, context: ExecutionContext) -> list[dict]:
         port, page = await self._open(context)
         if self.submission_started:
             # On this attempt the editor is still open. Inspect it before a
             # read-only navigation removes a post-click verification prompt.
             # Recovery opens a blank page and has no editor to inspect yet.
-            await port.check_challenge(page)
+            while True:
+                try:
+                    await port.check_challenge(page)
+                    break
+                except TaskError as exc:
+                    await self._handle_verification(context, port, exc)
         await context.run_stage("navigation", lambda: port.navigate(page, str(context.manifest["content_type"]), readonly=True))
-        await self._guard(context)
-        return await port.list_works(page, str(context.manifest["content_type"]))
+        while True:
+            try:
+                await self._guard(context)
+                return await port.list_works(page, str(context.manifest["content_type"]))
+            except TaskError as exc:
+                await self._handle_verification(context, port, exc)
 
     async def close(self) -> None:
         if self.session is not None:

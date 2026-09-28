@@ -2,6 +2,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -9,6 +10,20 @@ from tests.task_fixtures import make_manifest, make_service
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('arguments', [
+    ['run', '--verification-wait', '60'],
+    ['run', '--job', 'unneeded', '--verification-wait', '60'],
+    ['run', '--job', 'unneeded', '--headed', '--prepare-only', '--verification-wait', '60'],
+    ['run', '--job', 'unneeded', '--headed', '--verification-wait', '-1'],
+    ['run', '--job', 'unneeded', '--headed', '--verification-wait', '601'],
+])
+def test_verification_wait_requires_bounded_visible_single_delivery(tmp_path, arguments):
+    completed, result = run_jobs(tmp_path / 'tasks.sqlite3', *arguments)
+    assert completed.returncode == 2
+    assert result['error']['code'] == 'INVALID_INPUT'
+    assert result['error']['field'] == 'verification_wait'
 
 
 def run_jobs(db, *arguments):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 
 
@@ -26,12 +27,14 @@ def capability_report() -> list[dict]:
     return report
 
 
-def default_adapters(runtime_dir: Path, *, headed: bool = False, prepare_only: bool = False) -> dict:
+def default_adapters(runtime_dir: Path, *, headed: bool = False, prepare_only: bool = False,
+                     verification_wait: float = 0, on_verification: Callable[[str], None] | None = None) -> dict:
     from orchestrator.browser import BrowserSession
     from orchestrator.platforms.base import BrowserDeliveryAdapter, PreparationOnlyAdapter
     from orchestrator.platforms.profiles import create_port
 
     adapters = {platform: BrowserDeliveryAdapter(runtime_dir, lambda p=platform: create_port(p),
+        verification_wait=verification_wait if platform == "douyin" else 0, on_verification=on_verification,
         session_factory=lambda context: BrowserSession(context, launch_options={"headless": not headed, "channel": "chromium"}))
         for platform in ("douyin", "xiaohongshu", "tencent")}
     return {key: PreparationOnlyAdapter(value) if prepare_only else value for key, value in adapters.items()}

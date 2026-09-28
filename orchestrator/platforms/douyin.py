@@ -114,6 +114,11 @@ class DouyinVideoPort(DomPagePort):
                           if item["name"] in {"sessionid", "sessionid_ss", "uid_tt", "uid_tt_ss"})
         return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
+    def require_fresh_identity(self) -> None:
+        """A resolved challenge needs a new site-observed identity response."""
+        self.identity = None
+        self.identity_cookie_digest = None
+
     async def identify_account(self, page: Any) -> str:
         # Observe the site's own authenticated response. Recheck the session
         # cookie identity at each guard; a session change needs a new verified
@@ -368,6 +373,12 @@ class DouyinVideoPort(DomPagePort):
             raise TaskError("INVALID_STATE", "Final action was already attempted")
         self.submitted = True
         await self.submit_button.click(timeout=0)
+        return await self.wait_for_receipt(page)
+
+    async def wait_for_receipt(self, page: Any) -> dict:
+        """Continue observing an existing submission without another click."""
+        if not self.submitted:
+            raise TaskError("INVALID_STATE", "No submission is awaiting a receipt")
         while True:
             await self.check_challenge(page)
             if self.observed_receipt is not None:
