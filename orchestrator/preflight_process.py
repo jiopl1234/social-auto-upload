@@ -158,7 +158,8 @@ async def verify_job(job: dict, database: Path, runtime_dir: Path,
 
 async def run_child_request(request: dict[str, Any], *, module: str = "orchestrator.preflight_process") -> Any:
     """Run an internal operation in a watched child that is reaped on cancellation."""
-    if module not in {"orchestrator.preflight_process", "orchestrator.diagnostic_process", "orchestrator.session_process"}:
+    if module not in {"orchestrator.preflight_process", "orchestrator.diagnostic_process", "orchestrator.session_process",
+                      "orchestrator.file_parts_process"}:
         raise TaskError("UNSUPPORTED", "Child operation is not supported")
     parent_pid = os.getpid()
     parent_identity = process_identity(parent_pid)

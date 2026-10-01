@@ -11,7 +11,7 @@
 
 ## For Humans
 
-本分支保留抖音、小红书的 `upload-video` / `upload-note` 和视频号的 `upload-video` 命令参数兼容，但有效参数调用会返回 `UNSUPPORTED` 迁移错误，不会执行旧发布流程。实际发布入口是 [持久发布任务](tasks.md)（`sau jobs`）；[抖音视频](douyin-video.md) 已开放文档所列有限范围，其完整 CLI 真实提交仍待验收，其他四条路径继续受限。安装与离线验收通过不等于生产就绪。独立的手动登录、账号检查命令仍可使用。
+本分支保留抖音、小红书的 `upload-video` / `upload-note` 和视频号的 `upload-video` 命令参数兼容，但有效参数调用会返回 `UNSUPPORTED` 迁移错误，不会执行旧发布流程。实际发布入口是 [持久发布任务](tasks.md)（`sau jobs`）；[抖音视频](douyin-video.md)、[小红书视频](xiaohongshu-video.md)和[视频号视频](channels-video.md)已开放文档所列有限范围，图文继续受限。视频号已完成公共任务接口的一次真实提交与恢复，CLI 准备及作品查询已验收；其新版 CLI 首次提交到完成仍待新视频验收。小红书修正后的正向回执即时入库仍待新视频线上验证。安装与离线验收通过不等于生产就绪。独立的手动登录、账号检查命令仍可使用。
 
 ### 1. 克隆项目
 

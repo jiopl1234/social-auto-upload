@@ -13,9 +13,7 @@
 - 当前网络是否能访问 GitHub
 - GitHub Release 是否可访问
 - 本地目录是否有写权限
-- 国内网络较慢时，可先用 `https://gh-proxy.com/` 或 `https://gh-proxy.org/` 辅助访问对应 release 地址排障
-- 示例：
-  - `https://gh-proxy.org/https://github.com/biliup/biliup/releases/download/v1.1.29/biliupR-v1.1.29-aarch64-linux.tar.xz`
+- 核对实际平台架构、运行时版本和可信上游下载来源；不默认使用第三方代理地址下载可执行文件。
 
 ## 3. `check` 返回 `invalid`
 

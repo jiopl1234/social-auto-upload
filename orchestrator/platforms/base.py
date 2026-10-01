@@ -58,6 +58,7 @@ class BrowserDeliveryAdapter:
         self.secondary_readonly_page = False
         self.verified_for: str | None = None
         self.cleanup_warnings: list[dict] = []
+        self.preparation_only = False
 
     def supports(self, manifest: Mapping[str, Any]) -> bool:
         port = self.port_factory()
@@ -72,20 +73,48 @@ class BrowserDeliveryAdapter:
         if port.platform != context.manifest["platform"] or context.manifest["content_type"] not in port.content_types:
             raise TaskError("UNSUPPORTED", "Content path is not supported", field="content_type")
         from orchestrator.platforms.douyin import DouyinVideoPort
+        from orchestrator.platforms.xiaohongshu import XiaohongshuVideoPreparationPort
+        from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
+        from orchestrator.platforms.channels import ChannelsVideoPreparationPort, ACCOUNT_PATTERN
+        from orchestrator.platforms.channels_delivery import ChannelsVideoPort
 
-        live = (type(port) is DouyinVideoPort and port.verification_scope == "douyin_video_v1"
+        douyin_live = (type(port) is DouyinVideoPort and port.verification_scope == "douyin_video_v1"
                 and port.edit_url == "https://creator.douyin.com/creator-micro/content/upload")
+        xhs_prepare = (self.preparation_only and type(port) is XiaohongshuVideoPreparationPort
+                       and port.verification_scope == "xiaohongshu_video_prepare_v1"
+                       and port.edit_url == "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video")
+        xhs_live = (type(port) is XiaohongshuVideoPort and port.verification_scope == "xiaohongshu_video_v1"
+                    and port.edit_url == "https://creator.xiaohongshu.com/publish/publish?from=homepage&target=video")
+        channels_prepare = (self.preparation_only and type(port) is ChannelsVideoPreparationPort
+                            and port.verification_scope == "channels_video_prepare_v1"
+                            and port.edit_url == "https://channels.weixin.qq.com/platform/post/create")
+        channels_live = (type(port) is ChannelsVideoPort and port.verification_scope == "channels_video_v1"
+                         and port.edit_url == "https://channels.weixin.qq.com/platform/post/create")
+        live = douyin_live or xhs_prepare or xhs_live or channels_prepare or channels_live
         if not live and port.verification_scope != "local_fixture":
             raise TaskError("UNSUPPORTED", "Live account and work evidence has not been verified", field="platform")
         parsed = urlsplit(port.edit_url)
         if not live and not (parsed.scheme == "file" or (parsed.scheme in {"http", "https"}
                 and parsed.hostname in {"127.0.0.1", "localhost", "::1"})):
             raise TaskError("UNSUPPORTED", "Local evidence cannot enable a production origin", field="platform")
-        if live and not str(context.manifest["expected_account_id"]).isdigit():
+        if douyin_live and not str(context.manifest["expected_account_id"]).isdigit():
             raise TaskError("INVALID_INPUT", "Expected account ID is required", field="expected_id")
+        if xhs_prepare or xhs_live:
+            import re
+
+            if not re.fullmatch(r"[a-f0-9]{24}", str(context.manifest["expected_account_id"])):
+                raise TaskError("INVALID_INPUT", "Expected account ID is required", field="expected_id")
+        if channels_prepare or channels_live:
+            import re
+
+            if not re.fullmatch(ACCOUNT_PATTERN, str(context.manifest["expected_account_id"])):
+                raise TaskError("INVALID_INPUT", "Expected account ID is required", field="expected_id")
         validator = getattr(port, "validate_scope", None)
         if callable(validator):
             validator(context.manifest)
+        binder = getattr(port, "bind_context", None)
+        if callable(binder):
+            binder(context)
         self.port, self.attempt_id = port, context.attempt_id
         self.submission_started = False
         self.verification_deadline = None
@@ -93,6 +122,9 @@ class BrowserDeliveryAdapter:
         self.verified_for = None
         self.cleanup_warnings.clear()
         session = self.session_factory(context)
+        if (isinstance(port, ChannelsVideoPreparationPort)
+                and context.store.get(context.job_id)['submission'] == 'NOT_SUBMITTED'):
+            session.storage_state_filter = port.preparation_storage_state
         if live and self.verification_wait and session.launch_options.get("headless", True):
             raise TaskError("INVALID_INPUT", "Verification wait requires a visible browser", field="verification_wait")
         self.session = session
@@ -150,6 +182,8 @@ class BrowserDeliveryAdapter:
         return actual
 
     async def verify_ready(self, context: ExecutionContext) -> None:
+        if self.preparation_only:
+            raise TaskError("UNSUPPORTED", "This adapter can only prepare content")
         if self.session is None or self.port is None or self.attempt_id != context.attempt_id or self.submission_started:
             raise TaskError("INVALID_STATE", "This attempt cannot submit again")
         await self._guard(context)
@@ -162,6 +196,8 @@ class BrowserDeliveryAdapter:
         self.verified_for = context.attempt_id
 
     async def submit(self, context: ExecutionContext) -> dict | None:
+        if self.preparation_only:
+            raise TaskError("UNSUPPORTED", "This adapter can only prepare content")
         port = self.port
         if port is None or self.verified_for != context.attempt_id or self.submission_started:
             raise TaskError("INVALID_STATE", "Final action was not prepared for this attempt")
@@ -174,18 +210,25 @@ class BrowserDeliveryAdapter:
             except TaskError as exc:
                 return await self._handle_verification(context, port, exc)
         finally:
-            receipt = getattr(port, "observed_receipt", None)
-            if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str):
-                context.store.record_receipt(context.job_id, context.lease.token, receipt["content_id"])
             observer = getattr(port, "receipt_task", None)
             if isinstance(observer, asyncio.Task):
                 context.budget.track(observer)
+            from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
+            from orchestrator.platforms.channels_delivery import ChannelsVideoPort
+            if isinstance(port, XiaohongshuVideoPort) and port.receipt_observation is not None:
+                context.store.record_submission_response(context.job_id, context.lease.token, port.receipt_observation)
+            if isinstance(port, ChannelsVideoPort) and port.receipt_observation is not None:
+                context.store.record_channels_response(context.job_id, context.lease.token, port.receipt_observation)
+            receipt = getattr(port, "observed_receipt", None)
+            if isinstance(receipt, dict) and isinstance(receipt.get("content_id"), str):
+                context.store.record_receipt(context.job_id, context.lease.token, receipt["content_id"])
 
     async def _handle_verification(self, context: ExecutionContext, port: PagePort, error: TaskError) -> dict:
         from orchestrator.platforms.douyin import DouyinVideoPort
+        from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
 
         if (error.code != "AUTH_REQUIRED" or not self.verification_wait or not self.submission_started
-                or not isinstance(port, DouyinVideoPort)):
+                or not isinstance(port, (DouyinVideoPort, XiaohongshuVideoPort))):
             raise error
         context.assert_owner()
         clock = asyncio.get_running_loop().time
@@ -254,6 +297,13 @@ class BrowserDeliveryAdapter:
 
     async def reconcile(self, context: ExecutionContext) -> list[dict]:
         port, page = await self._open(context)
+        target = getattr(port, "set_reconciliation_target", None)
+        if callable(target):
+            target(context.store.current_attempt(context.job_id).get("receipt_id"))
+        from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
+        from orchestrator.platforms.channels_delivery import ChannelsVideoPort
+        if isinstance(port, (XiaohongshuVideoPort, ChannelsVideoPort)):
+            await port.ensure_reconciliation_evidence(context)
         if self.submission_started and not self.secondary_readonly_page:
             # On this attempt the editor is still open. Inspect it before a
             # read-only navigation removes a post-click verification prompt.
@@ -269,12 +319,16 @@ class BrowserDeliveryAdapter:
         while True:
             try:
                 await self._guard(context)
-                return await port.list_works(page, str(context.manifest["content_type"]))
+                works = await port.list_works(page, str(context.manifest["content_type"]))
+                await self._guard(context)
+                return works
             except TaskError as exc:
                 await self._handle_verification(context, port, exc)
 
     async def close(self) -> None:
         if self.session is not None:
+            if getattr(self.port, "resources_unconfirmed", False):
+                self.session.mark_unconfirmed_resource()
             try:
                 await self.session.close()
             finally:
@@ -290,6 +344,7 @@ class PreparationOnlyAdapter:
 
     def __init__(self, adapter: BrowserDeliveryAdapter):
         self.adapter = adapter
+        self.adapter.preparation_only = True
 
     @property
     def cleanup_warnings(self) -> list[dict]:

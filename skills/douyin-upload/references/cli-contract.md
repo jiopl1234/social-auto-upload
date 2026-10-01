@@ -1,109 +1,24 @@
 # 抖音 CLI 契约
 
-这个 skill 默认假设当前环境已经安装并可调用 `sau` 命令。
+登录/检查：
 
-## 命令列表
-
-### 登录
-
-```bash
-sau douyin login --account <account>
+```powershell
+uv run --frozen --offline --no-sync sau douyin login --account douyin_main --headed
+uv run --frozen --offline --no-sync sau douyin check --account douyin_main
 ```
 
-- 必填参数:
-  - `--account`
-- 作用:
-  - 启动抖音登录流程，为指定账号生成或刷新 cookie 文件
-  - 如果登录过程中生成本地二维码图片，agent 应优先直接把图片展示/发送给用户扫码，而不是只回传路径
-- 账号说明:
-  - `--account` 传的是用户自定义的 `account_name`，不是固定只能叫 `creator`
-  - 一个 `account_name` 对应一个账号文件，可用于多账号隔离和并发任务
+`valid` 只证明会话检查通过。[由 agent 在线识别 ID 并绑定](../../social-auto-upload/references/accounts.md)后，使用[共用任务命令和 UTF-8 清单](../../social-auto-upload/references/task-cli.md)。清单 platform 为 `douyin`，正文字段是 `body`，不是旧命令的 desc/note。
 
-### 校验 cookie
-
-```bash
-sau douyin check --account <account>
+```powershell
+$taskDb = 'C:/Users/Chinese/.sau/tasks.sqlite3'
+uv run --frozen --offline --no-sync sau jobs --db $taskDb --media-root C:/Users/Chinese/Videos --json enqueue --manifest content.json
+uv run --frozen --offline --no-sync sau jobs --db $taskDb --media-root C:/Users/Chinese/Videos --json run --job JOB_ID --headed
+uv run --frozen --offline --no-sync sau jobs --db $taskDb --json status JOB_ID
+uv run --frozen --offline --no-sync sau jobs --db $taskDb --json attempts JOB_ID
 ```
 
-- 必填参数:
-  - `--account`
-- 预期输出:
-  - `valid`：cookie 可用
-  - `invalid`：cookie 缺失或已失效
+同一清单重复 enqueue 返回原任务；同键不同内容冲突。需要仅准备时给 run 加 `--prepare-only`，它占一次尝试。`--max-attempts` 默认 2、范围 1–5。未知提交恢复保持原 job/attempt。旧 upload-video/upload-note 参数只保留解析兼容，不能用于真实发表。不要把旧 `--schedule` 参数转抄到 jobs run；预约清单以 docs/tasks.md 为准。
 
-### 上传视频
+当前有限范围为原创、无 AI 的视频、标题/正文和立即公开发表，支持范围以 capabilities 和 docs/douyin-video.md 为准。图文真实发布仍 restricted。完整 CLI 验收缺口仍在能力报告中；不能把某次人工验证后的只读恢复当作首轮自动续行已验收。
 
-```bash
-sau douyin upload-video \
-  --account <account> \
-  --file <video-path> \
-  --title "<title>" \
-  [--desc "<description>"] \
-  [--tags tag1,tag2] \
-  [--schedule "YYYY-MM-DD HH:MM"] \
-  [--thumbnail <image-path>] \
-  [--product-link <url>] \
-  [--product-title "<title>"] \
-  [--debug] \
-  [--headless | --headed]
-```
-
-- 必填参数:
-  - `--account`
-  - `--file`
-  - `--title`
-- 可选参数:
-  - `--desc`
-  - `--tags`
-  - `--schedule`
-  - `--thumbnail`
-  - `--product-link`
-  - `--product-title`
-  - `--debug`
-  - `--headless`
-  - `--headed`
-
-### 上传图文
-
-```bash
-sau douyin upload-note \
-  --account <account> \
-  --images <image-1> [image-2 ...] \
-  --title "<title>" \
-  [--note "<content>"] \
-  [--tags tag1,tag2] \
-  [--schedule "YYYY-MM-DD HH:MM"] \
-  [--debug] \
-  [--headless | --headed]
-```
-
-- 必填参数:
-  - `--account`
-  - `--images`
-  - `--title`
-- 可选参数:
-  - `--note`
-  - `--tags`
-  - `--schedule`
-  - `--debug`
-  - `--headless`
-  - `--headed`
-
-## 发布策略
-
-- 如果不传 `--schedule`，CLI 使用立即发布
-- 如果传了 `--schedule`，CLI 自动切换为定时发布
-- 时间格式为:
-
-```text
-YYYY-MM-DD HH:MM
-```
-
-## 额外说明
-
-- `upload-video` 每次命令只支持一个视频文件
-- `upload-note` 每次命令支持多张图片
-- 视频描述字段统一使用 `--desc`
-- 图文正文统一使用 `--note`
-- `upload-note` 当前不支持 GIF
-- `upload-note` 当前最多支持 35 张图片
+最新范围、回执和媒体证据见[项目使用说明](../../../docs/douyin-video.md)及当前 `jobs --json capabilities`。

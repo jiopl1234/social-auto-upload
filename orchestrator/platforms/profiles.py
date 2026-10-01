@@ -46,10 +46,19 @@ WORK_URLS = {
 def create_port(platform: str, *, evidence: PageEvidence | None = None,
                 selectors: EditorSelectors | None = None, edit_url: str | None = None,
                 works_url: str | None = None, note_selectors: EditorSelectors | None = None) -> DomPagePort:
-    if platform == "douyin" and all(value is None for value in (evidence, selectors, edit_url, works_url, note_selectors)):
-        from orchestrator.platforms.douyin import DouyinVideoPort
+    if all(value is None for value in (evidence, selectors, edit_url, works_url, note_selectors)):
+        if platform == "douyin":
+            from orchestrator.platforms.douyin import DouyinVideoPort
 
-        return DouyinVideoPort()
+            return DouyinVideoPort()
+        if platform == "xiaohongshu":
+            from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
+
+            return XiaohongshuVideoPort()
+        if platform == "tencent":
+            from orchestrator.platforms.channels_delivery import ChannelsVideoPort
+
+            return ChannelsVideoPort()
     return DomPagePort(platform, selectors or EDITORS[platform],
                        edit_url=edit_url or EDIT_URLS[platform], works_url=works_url or WORK_URLS[platform],
                        evidence=evidence, note_selectors=note_selectors or NOTE_EDITORS.get(platform),

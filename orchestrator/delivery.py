@@ -30,9 +30,11 @@ def match_work(job: Mapping[str, Any], attempt: Mapping[str, Any], candidates: S
             continue
         created_at = _timestamp(candidate.get("created_at"))
         live_douyin = candidate.get("evidence_scope") == "douyin_video_v1"
+        live_xhs = candidate.get("evidence_scope") == "xiaohongshu_video_v1"
+        live_channels = candidate.get("evidence_scope") == "channels_video_v1"
         # This observed endpoint reports integer epoch seconds. Allow only its
         # subsecond truncation, not an arbitrary clock-skew matching window.
-        earliest = submitted_at.replace(microsecond=0) if live_douyin else submitted_at
+        earliest = submitted_at.replace(microsecond=0) if live_douyin or live_xhs or live_channels else submitted_at
         if created_at is None or not earliest <= created_at <= submitted_at + timedelta(hours=1):
             continue
         if (candidate.get("platform") != job["platform"]
@@ -45,22 +47,42 @@ def match_work(job: Mapping[str, Any], attempt: Mapping[str, Any], candidates: S
         receipt_id = attempt.get("receipt_id")
         if receipt_id and candidate["content_id"] != receipt_id:
             continue
-        if live_douyin:
+        if live_douyin or live_xhs or live_channels:
             actual = job["actual_metadata"]
             upload = [item for item in job.get("evidence", []) if item.get("kind") == "uploaded_video"
                       and item.get("attempt_id") == attempt["attempt_id"]]
-            # The server's work ID must come from this durable attempt's own
-            # receipt. A title match cannot recover a missing receipt, and the
-            # source SHA is never copied into the remote observation.
-            if (job["platform"] != "douyin" or manifest["content_type"] != "video" or not receipt_id
+            if (job["platform"] != ("douyin" if live_douyin else "xiaohongshu" if live_xhs else "tencent") or manifest["content_type"] != "video"
                     or not isinstance(actual, dict) or actual.get("tags") != []
                     or actual.get("cover") is not None or actual.get("collection") is not None
                     or actual.get("declarations") != {}
                     or not isinstance(candidate.get("remote_video_id"), str) or not candidate["remote_video_id"]
-                    or len(upload) != 1 or upload[0].get("video_id") != candidate["remote_video_id"]
+                    or len(upload) != 1 or len(expected_media) != 1
                     or upload[0].get("sha256") != expected_media[0]
                     or candidate.get("metadata") != {key: actual[key] for key in ("title", "body", "tags")}):
                 continue
+            if live_douyin:
+                if not receipt_id or upload[0].get("video_id") != candidate["remote_video_id"]:
+                    continue
+            else:
+                # XHS converts the temporary upload key into a canonical file
+                # ID. Its independent detail exposes the original video MD5;
+                # never relabel that field as SHA256 or copy local hashes into it.
+                source_md5 = upload[0].get("md5")
+                if (not isinstance(source_md5, str) or len(source_md5) != 32
+                        or any(char not in "0123456789abcdef" for char in source_md5)
+                        or candidate.get("remote_media_md5") != source_md5
+                        or (not receipt_id and candidate.get("listing_complete") is not True)):
+                    continue
+                if live_channels:
+                    from orchestrator.platforms.channels_delivery import ChannelsVideoPort
+
+                    if (candidate.get('source') != 'work_detail'
+                            or candidate.get('account_evidence') not in {'authenticated_creator_list', 'work_detail'}):
+                        continue
+                    replies = [item for item in job.get('evidence', []) if item.get('kind') == 'submission_response'
+                               and item.get('attempt_id') == attempt['attempt_id']]
+                    if not receipt_id and (len(replies) != 1 or not ChannelsVideoPort.positive_acknowledgement(replies[0])):
+                        continue
             matches.append(candidate)
             continue
         if candidate.get("metadata") != job["actual_metadata"]:

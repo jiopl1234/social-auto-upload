@@ -111,7 +111,7 @@ async def _reconcile(adapter: DeliveryAdapter, context: ExecutionContext, job: d
         evidence = await context.run_stage("reconcile", lambda: adapter.reconcile(context))
         if not isinstance(evidence, (list, tuple)):
             raise TaskError("RECONCILIATION_UNAVAILABLE", "Read-only work evidence is unavailable")
-        return match_work(job, context.store.current_attempt(context.job_id), evidence)
+        return match_work(context.store.get(context.job_id), context.store.current_attempt(context.job_id), evidence)
     except TaskError as exc:
         warnings.append(exc.as_dict())
     except Exception:

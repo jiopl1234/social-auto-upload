@@ -23,11 +23,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     for action in ("status", "events", "attempts"):
         actions.add_parser(action).add_argument("job_id")
     actions.add_parser("resume", help="Resume an unsubmitted blocked job after rebinding its session").add_argument("job_id")
+    actions.add_parser("recover-receipt", help="Reparse a saved XHS creation receipt for an already confirmed work").add_argument("job_id")
     actions.add_parser("list", help="List persisted tasks")
     actions.add_parser("accounts", help="Query account status and pause reasons")
     actions.add_parser("capabilities", help="Query per-path offline and production verification status")
-    inspect = actions.add_parser("inspect-work", help="Read one existing Douyin video without publishing")
-    inspect.add_argument("--platform", dest="account_platform", choices=["douyin"], required=True)
+    inspect = actions.add_parser("inspect-work", help="Read one existing Douyin or Channels video without publishing")
+    inspect.add_argument("--platform", dest="account_platform", choices=["douyin", "tencent"], required=True)
     inspect.add_argument("--account", required=True)
     inspect.add_argument("--content-id", required=True)
     inspect.add_argument("--headed", action="store_true")
@@ -43,7 +44,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     run.add_argument("--prepare-only", action="store_true", help="Check and prepare one job without publishing")
     run.add_argument("--max-attempts", type=int, choices=range(1, 6), default=2)
     run.add_argument("--verification-wait", type=int, default=0, metavar="SECONDS",
-                     help="Keep one headed Douyin submission open for human verification (1-600 seconds)")
+                     help="Keep one headed Douyin/Xiaohongshu video submission open for human verification (1-600 seconds)")
 
 
 def emit_error(error: TaskError) -> int:
@@ -69,6 +70,8 @@ async def dispatch(args: argparse.Namespace) -> int:
             result = service.status(args.job_id)
         elif args.action == "resume":
             result = service.resume(args.job_id)
+        elif args.action == "recover-receipt":
+            result = service.recover_receipt(args.job_id)
         elif args.action == "events":
             result = {"job_id": args.job_id, "events": service.events(args.job_id)}
         elif args.action == "attempts":
@@ -100,8 +103,8 @@ async def dispatch(args: argparse.Namespace) -> int:
                 if selected["submission"] != "NOT_SUBMITTED":
                     raise TaskError("INVALID_STATE", "An existing submission can only be recovered read-only",
                                     field="verification_wait")
-                if selected["platform"] != "douyin" or selected["manifest"]["content_type"] != "video":
-                    raise TaskError("UNSUPPORTED", "Verification wait is only available for Douyin video", field="platform")
+                if selected["platform"] not in {"douyin", "xiaohongshu"} or selected["manifest"]["content_type"] != "video":
+                    raise TaskError("UNSUPPORTED", "Verification wait is only available for supported video delivery", field="platform")
             if args.prepare_only and selected is not None and selected["submission"] != "NOT_SUBMITTED":
                 raise TaskError("INVALID_STATE", "Preparation cannot resume a submitted task")
             if selected is not None:
@@ -119,12 +122,14 @@ async def dispatch(args: argparse.Namespace) -> int:
             if selected is not None:
                 paths = [item for item in paths if item["platform"] == selected["platform"]
                          and item["content_type"] == selected["manifest"]["content_type"]]
-            enabled = [item for item in paths if item.get("can_execute", item["production_verified"])]
+            enabled = [item for item in paths if item.get("can_execute", item["production_verified"])
+                       or (args.prepare_only and item.get("can_prepare", False))]
             if not enabled:
                 raise TaskError("UNSUPPORTED", "Live account and work evidence is not verified; inspect jobs capabilities")
             def verification_notice(state: str) -> None:
+                platform_label = "小红书" if selected is not None and selected["platform"] == "xiaohongshu" else "抖音"
                 messages = {
-                    "waiting": f"抖音要求本人验证，原浏览器窗口最多保留 {wait} 秒。请按页面提示完成验证，不要再次点击发表。",
+                    "waiting": f"{platform_label}要求本人验证，原浏览器窗口最多保留 {wait} 秒。请按页面提示完成验证，不要再次点击发表。",
                     "verified": "已收到同次提交的回执并核对身份，正在确认作品结果。",
                     "expired": "验证等待已到期，任务保持未知提交状态，不会自动重发。",
                 }

@@ -115,16 +115,24 @@ def test_receipt_exception_after_challenge_is_consumed(tmp_path, caplog):
         assert "private browser diagnostic" not in caplog.text
 
 
-def test_unverified_live_video_paths_stop_before_browser_or_submission(tmp_path):
+def test_unverified_live_paths_stop_before_browser_or_submission(tmp_path):
+    from orchestrator.errors import TaskError
     from orchestrator.platforms import capability_report, default_adapters
 
     service = make_service(tmp_path)
     report = capability_report()
-    for platform in ("xiaohongshu", "tencent"):
-        capability = next(item for item in report if item["platform"] == platform and item["content_type"] == "video")
+    for platform, kind in (("xiaohongshu", "note"),):
+        capability = next(item for item in report if item["platform"] == platform and item["content_type"] == kind)
         assert capability["production_verified"] is False
         assert capability["status"] == "restricted"
-        job = service.enqueue(make_manifest(tmp_path, platform=platform))
+        job = service.enqueue(make_manifest(tmp_path, platform=platform, content_type=kind))
+        if kind == "note":
+            with pytest.raises(TaskError) as failure:
+                asyncio.run(service.run_once(adapters=default_adapters(service.runtime_dir), job_id=job["job_id"]))
+            assert failure.value.code == "UNSUPPORTED"
+            assert service.attempts(job["job_id"]) == []
+            assert not any(event["stage"] == "runtime" for event in service.events(job["job_id"]))
+            continue
         result = asyncio.run(service.run_once(adapters=default_adapters(service.runtime_dir), job_id=job["job_id"]))
         assert result is not None
         assert result["status"] == "FAILED_PRE_SUBMIT"

@@ -17,12 +17,31 @@ def test_capabilities_separate_offline_evidence_from_unverified_production(tmp_p
     for path in report["capabilities"]:
         assert path["offline_verified"] is True
         assert path["offline_evidence"] == "synthetic_dom_and_task_protocol"
-        assert path["production_verified"] is False
+        assert path["production_verified"] is ((path["platform"], path["content_type"]) == ("tencent", "video"))
         if (path["platform"], path["content_type"]) == ("douyin", "video"):
             assert path["can_execute"] is True
             assert path["status"] == "available_limited"
             assert path["live_evidence_verified"] is True
             assert path["missing_evidence"] == ["cli_end_to_end_live_submission"]
+            continue
+        if (path["platform"], path["content_type"]) == ("xiaohongshu", "video"):
+            assert path["status"] == "available_limited"
+            assert path["can_prepare"] is True
+            assert path["can_execute"] is True
+            assert path["live_submission_verified"] is True
+            assert path["live_recovery_verified"] is True
+            assert path["live_receipt_verified"] is True
+            assert path["live_receipt_recovery_verified"] is True
+            assert path["missing_evidence"] == ["live_inline_receipt_persistence"]
+            continue
+        if (path['platform'], path['content_type']) == ('tencent', 'video'):
+            assert path['status'] == 'available_limited'
+            assert path['can_prepare'] is True and path['can_execute'] is True
+            assert path['live_submission_verified'] is True and path['live_recovery_verified'] is True
+            assert path['live_cli_submission_verified'] is True
+            assert path['live_receipt_kind'] == 'positive_acknowledgement_without_content_id'
+            assert path['missing_evidence'] == []
+            assert path['live_evidence'] == 'docs/audit/channels-cli-video-2026-10-01.md'
             continue
         assert path["status"] == "restricted"
         assert path["missing_evidence"] == ["stable_account_id", "per_asset_processing", "work_detail_readback"]

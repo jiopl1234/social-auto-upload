@@ -1,28 +1,21 @@
-# PowerShell examples for the installed sau CLI.
-
-# account_name is user-defined. One account_name maps to one account file.
-# You can prepare multiple account names and run them in parallel.
-$account = "account_a"
-$video = "videos/demo.mp4"
-$thumbnail = "videos/demo.png"
-$noteImages = @("videos/1.png", "videos/2.png", "videos/3.png")
-
-sau kuaishou login --account $account
-sau kuaishou check --account $account
-
-sau kuaishou upload-video `
-  --account $account `
-  --file $video `
-  --title "Kuaishou video from PowerShell" `
-  --desc "Kuaishou video description from PowerShell" `
-  --tags "cli,video" `
-  --thumbnail $thumbnail `
-  --headless
-
-sau kuaishou upload-note `
-  --account $account `
-  --images $noteImages `
-  --title "Kuaishou note title from PowerShell" `
-  --note "Kuaishou note from PowerShell" `
-  --tags "cli,note" `
-  --headless
+# Single-operation preview. Bilibili login execution needs a local interactive terminal.
+param(
+    [ValidateSet('login','check','upload-video','upload-note')][string]$Action = 'check',
+    [Parameter(Mandatory=$true)][string]$Account,
+    [string]$File, [string[]]$Images, [string]$Title, [string]$Desc,
+    [string]$Note, [Nullable[int]]$Tid, [string]$Tags, [string]$Schedule,
+    [switch]$Headed, [switch]$Execute
+)
+$scriptArgs = @($Action, '--account', $Account)
+if ($File) { $scriptArgs += @('--file', $File) }
+if ($Title) { $scriptArgs += @('--title', $Title) }
+if ($PSBoundParameters.ContainsKey('Desc')) { $scriptArgs += @('--desc', $Desc) }
+if ($Note) { $scriptArgs += @('--note', $Note) }
+if ($null -ne $Tid) { $scriptArgs += @('--tid', [string]$Tid) }
+if ($Tags) { $scriptArgs += @('--tags', $Tags) }
+if ($Schedule) { $scriptArgs += @('--schedule', $Schedule) }
+if ($Images) { $scriptArgs += '--images'; $scriptArgs += $Images }
+if ($Headed) { $scriptArgs += '--headed' }
+if ($Execute) { $scriptArgs += '--execute' }
+& uv run --frozen --offline --no-sync python (Join-Path $PSScriptRoot 'kuaishou_cli_template.py') @scriptArgs
+exit $LASTEXITCODE

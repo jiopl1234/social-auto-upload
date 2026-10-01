@@ -159,11 +159,11 @@ def test_errors_are_json_and_unconnected_execution_does_not_publish(tmp_path):
     completed, missing = run_jobs(db, "status", "missing")
     assert completed.returncode == 3
     assert missing["error"]["code"] == "NOT_FOUND"
-    bind_local_account(db, "tencent")
+    bind_local_account(db, "xiaohongshu")
     completed, invalid = run_jobs(db, "enqueue")
     assert completed.returncode == 2
     assert invalid["error"]["code"] == "INVALID_INPUT"
-    manifest = write_manifest(tmp_path, platform="tencent")
+    manifest = write_manifest(tmp_path, platform="xiaohongshu", content_type="note")
     _, queued = run_jobs(db, "enqueue", "--manifest", manifest)
     completed, unsupported = run_jobs(db, "run", "--job", queued["job_id"])
     assert completed.returncode == 5
@@ -206,7 +206,8 @@ def test_capability_and_evidence_maintenance_are_machine_readable(tmp_path):
     completed, result = run_jobs(db, "capabilities")
     assert completed.returncode == 0
     assert len(result["capabilities"]) == 5
-    assert all(item["production_verified"] is False for item in result["capabilities"])
+    assert all(item["production_verified"] is ((item["platform"], item["content_type"]) == ("tencent", "video"))
+               for item in result["capabilities"])
     completed, pruned = run_jobs(db, "prune-evidence")
     assert completed.returncode == 0
     assert pruned == {"removed": 0, "retention_days": 30}

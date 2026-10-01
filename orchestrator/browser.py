@@ -88,6 +88,7 @@ class BrowserSession:
         self._session_reader_uncertain = False
         self._creation_uncertain = False
         self._fully_closed = False
+        self.storage_state_filter: Callable[[dict], dict] | None = None
 
     async def open(self, session_path: Path, init_script: Path | None = None) -> Any:
         if self._open_attempted or self._fully_closed:
@@ -110,6 +111,10 @@ class BrowserSession:
                 raise
             if not isinstance(state, dict):
                 raise TaskError("STORAGE_ERROR", "Browser session state could not be loaded")
+            if self.storage_state_filter is not None:
+                state = self.storage_state_filter(state)
+                if not isinstance(state, dict):
+                    raise TaskError('STORAGE_ERROR', 'Browser session state could not be loaded')
             self.context.resources_started()
             self._resources_started = True
             self._creation_uncertain = True
@@ -158,6 +163,11 @@ class BrowserSession:
                 raise TaskError("STORAGE_ERROR", "Browser session state could not be saved") from None
 
         await self.context.run_stage("session_save", save)
+
+    def mark_unconfirmed_resource(self) -> None:
+        """Keep the account fenced when an attempt-owned helper cannot be reaped."""
+        self.context.resources_started()
+        self._creation_uncertain = True
 
     async def _close_one(self, name: str, resource: Any, remaining_count: int) -> BaseException | None:
         try:

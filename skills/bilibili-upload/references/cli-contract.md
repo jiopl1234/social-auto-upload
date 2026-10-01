@@ -17,7 +17,7 @@ sau bilibili login --account <account>
   - 触发 Bilibili 登录流程
 - 账号说明：
   - `--account` 传的是用户自定义的 `account_name`，不是固定只能叫 `creator`
-  - 一个 `account_name` 对应一个账号文件，可用于多账号隔离和并发任务
+  - 一个 `account_name` 对应一个账号文件，用于账号隔离；不据此宣称并发发布安全
 - 登录方式说明：
   - 这个命令应该由用户自己在本地真实终端里运行
   - 如果终端二维码显示不完整，可直接打开当前目录下的 `qrcode.png` 扫码
@@ -64,3 +64,5 @@ sau bilibili upload-video \
 - `--tags` 使用逗号分隔
 - `--schedule` 走 `sau` 统一时间格式
 - 程序会自动准备和更新 `biliup`
+
+本平台不支持 `sau jobs` 的任务交付协议；账号别名隔离不证明并发安全。示例默认预览一条命令，显式 --execute 才运行；未通过本次真实发布验收。

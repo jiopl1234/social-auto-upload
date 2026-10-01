@@ -47,3 +47,5 @@ python sau_cli.py bilibili --help
 - 如果国内网络访问 GitHub Release 较慢，可先用 `https://gh-proxy.com/` 或 `https://gh-proxy.org/` 辅助访问对应 release 地址排障
 - 示例：
   - `https://gh-proxy.org/https://github.com/biliup/biliup/releases/download/v1.1.29/biliupR-v1.1.29-aarch64-linux.tar.xz`
+
+优先使用当前项目环境的 `uv run --frozen --offline --no-sync sau`；这要求依赖已经安装，不阻止浏览器/上传器联网。本平台没有新版任务的防重发与作品确认保证。

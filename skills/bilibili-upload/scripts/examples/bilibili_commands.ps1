@@ -1,21 +1,21 @@
-# 登录
-# 建议由用户自己在本地真实终端里执行。
-# 如果终端二维码显示不完整，可以打开当前目录下的 qrcode.png 扫码。
-$account = "account_a"
-# account_name is user-defined. One account_name maps to one account file.
-# You can prepare multiple account names and run them in parallel.
-
-sau bilibili login --account $account
-
-# 校验
-sau bilibili check --account $account
-
-# 上传视频
-sau bilibili upload-video `
-  --account $account `
-  --file .\videos\demo.mp4 `
-  --title "Bilibili CLI Demo" `
-  --desc "Bilibili CLI Demo" `
-  --tid 249 `
-  --tags 足球,测试 `
-  --schedule "2026-03-26 16:00"
+# Single-operation preview. Bilibili login execution needs a local interactive terminal.
+param(
+    [ValidateSet('login','check','upload-video')][string]$Action = 'check',
+    [Parameter(Mandatory=$true)][string]$Account,
+    [string]$File, [string[]]$Images, [string]$Title, [string]$Desc,
+    [string]$Note, [Nullable[int]]$Tid, [string]$Tags, [string]$Schedule,
+    [switch]$Headed, [switch]$Execute
+)
+$scriptArgs = @($Action, '--account', $Account)
+if ($File) { $scriptArgs += @('--file', $File) }
+if ($Title) { $scriptArgs += @('--title', $Title) }
+if ($PSBoundParameters.ContainsKey('Desc')) { $scriptArgs += @('--desc', $Desc) }
+if ($Note) { $scriptArgs += @('--note', $Note) }
+if ($null -ne $Tid) { $scriptArgs += @('--tid', [string]$Tid) }
+if ($Tags) { $scriptArgs += @('--tags', $Tags) }
+if ($Schedule) { $scriptArgs += @('--schedule', $Schedule) }
+if ($Images) { $scriptArgs += '--images'; $scriptArgs += $Images }
+if ($Headed) { $scriptArgs += '--headed' }
+if ($Execute) { $scriptArgs += '--execute' }
+& uv run --frozen --offline --no-sync python (Join-Path $PSScriptRoot 'bilibili_cli_template.py') @scriptArgs
+exit $LASTEXITCODE

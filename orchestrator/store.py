@@ -812,25 +812,86 @@ class Store:
                                "VALUES (?, ?, 'QUEUED', 'recover', ?, '{}')", (job_id, job["attempt_id"], now))
             return self._job_from_row(self._job_row(connection, job_id))
 
-    def record_video_upload(self, job_id: str, owner_token: str, *, video_id: str, sha256: str) -> None:
+    def record_video_upload(self, job_id: str, owner_token: str, *, video_id: str, sha256: str,
+                            md5: str | None = None) -> None:
         """Persist the observed upload ID before the durable submit boundary."""
-        if (not isinstance(video_id, str) or not video_id or len(video_id) > 128
-                or not all(char.isalnum() or char in "_-" for char in video_id)):
-            raise TaskError("INVALID_RESULT", "Uploaded video identity is invalid", field="media")
         with self.transaction() as connection:
             self._require_owner(connection, job_id, owner_token)
             job = self._job_row(connection, job_id)
             manifest = json.loads(job["manifest_json"])
+            value = video_id.removeprefix("spectrum/") if isinstance(video_id, str) and job["platform"] == "xiaohongshu" else video_id
+            if (not isinstance(value, str) or not value or len(value) > 128
+                    or not all(char.isalnum() or char in "_-" for char in value)
+                    or (job["platform"] == "xiaohongshu" and not value.isascii())
+                    or (job["platform"] == "xiaohongshu" and not video_id.startswith("spectrum/"))):
+                raise TaskError("INVALID_RESULT", "Uploaded video identity is invalid", field="media")
             if (job["status"] != "PREPARING" or job["submission"] != "NOT_SUBMITTED"
-                    or job["platform"] != "douyin" or manifest["content_type"] != "video"
+                    or job["platform"] not in {"douyin", "xiaohongshu", "tencent"} or manifest["content_type"] != "video"
                     or len(manifest["media"]) != 1 or sha256 != manifest["media"][0]["sha256"]):
                 raise TaskError("INVALID_STATE", "Upload evidence does not belong to this preparation")
             evidence = [item for item in json.loads(job["evidence_json"])
                         if item.get("kind") != "uploaded_video"]
-            evidence.append({"kind": "uploaded_video", "video_id": video_id, "sha256": sha256,
-                             "attempt_id": job["attempt_id"]})
+            observation = {"kind": "uploaded_video", "video_id": video_id, "sha256": sha256,
+                           "attempt_id": job["attempt_id"]}
+            if md5 is not None:
+                self._validate_source_md5(md5)
+                observation["md5"] = md5
+            evidence.append(observation)
             connection.execute("UPDATE jobs SET evidence_json = ? WHERE job_id = ?",
                                (_canonical_json(evidence), job_id))
+
+    @staticmethod
+    def _validate_source_md5(md5: str) -> None:
+        if not isinstance(md5, str) or len(md5) != 32 or any(char not in "0123456789abcdef" for char in md5):
+            raise TaskError("INVALID_RESULT", "Source fingerprint is invalid", field="media")
+
+    def record_recovery_source_md5(self, job_id: str, owner_token: str, *, sha256: str, md5: str) -> None:
+        """Enrich legacy XHS evidence after a watched SHA-verified local read.
+
+        This never adds a receipt, starts an attempt, or changes submission state.
+        """
+        self._validate_source_md5(md5)
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            manifest = json.loads(job["manifest_json"])
+            evidence = json.loads(job["evidence_json"])
+            uploads = [item for item in evidence if item.get("kind") == "uploaded_video"
+                       and item.get("attempt_id") == job["attempt_id"]]
+            if (job["platform"] != "xiaohongshu" or job["status"] != "UNKNOWN_COMMIT"
+                    or job["submission"] != "MAY_HAVE_SUBMITTED" or manifest["content_type"] != "video"
+                    or len(manifest["media"]) != 1 or sha256 != manifest["media"][0]["sha256"]
+                    or len(uploads) != 1 or uploads[0].get("sha256") != sha256
+                    or uploads[0].get("md5") not in {None, md5}):
+                raise TaskError("INVALID_STATE", "Fingerprint does not belong to this recovery")
+            uploads[0]["md5"] = md5
+            connection.execute("UPDATE jobs SET evidence_json = ? WHERE job_id = ?",
+                               (_canonical_json(evidence), job_id))
+
+    def record_submission_response(self, job_id: str, owner_token: str, observation: dict) -> None:
+        """Save only the response schema, never raw tokens or response bodies."""
+        fields = observation.get("id_fields")
+        semantic = observation.get("receipt_fields")
+        allowed = {prefix+key for prefix in ("","data.","result.") for key in ("code","success","result","id","noteId","note_id")}
+        if (set(observation) != {"http_status","envelope","id_fields","receipt_fields"}
+                or type(observation.get("http_status")) is not int or not 100 <= observation["http_status"] <= 599
+                or observation.get("envelope") not in {"top","result"}
+                or not isinstance(fields,list) or len(fields)>6
+                or any(field not in {"id","noteId","note_id","data.id","data.noteId","data.note_id"} for field in fields)
+                or not isinstance(semantic,dict) or len(semantic)>18
+                or any(key not in allowed or not (
+                    ((type(value) is bool or (type(value) is int and -(2**31)<=value<2**31)) and key.split('.')[-1] in {"code","success","result"})
+                    or (key.split('.')[-1] in {"id","noteId","note_id"} and isinstance(value,str) and len(value)==24 and all(char in '0123456789abcdef' for char in value))
+                ) for key,value in semantic.items())):
+            raise TaskError("INVALID_RESULT", "Submission response schema is invalid")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            if job["platform"] != "xiaohongshu" or job["status"] != "SUBMITTING":
+                raise TaskError("INVALID_STATE", "Response evidence requires an active XHS submission")
+            evidence = json.loads(job["evidence_json"])
+            evidence.append({"kind":"submission_response","attempt_id":job["attempt_id"],**observation})
+            connection.execute("UPDATE jobs SET evidence_json=? WHERE job_id=?", (_canonical_json(evidence),job_id))
 
     def record_receipt(self, job_id: str, owner_token: str, content_id: str) -> None:
         with self.transaction() as connection:
@@ -839,6 +900,69 @@ class Store:
             if job["status"] != "SUBMITTING":
                 raise TaskError("INVALID_STATE", "No active submission accepts this receipt")
             connection.execute("UPDATE attempts SET receipt_id = ? WHERE attempt_id = ?", (content_id, job["attempt_id"]))
+
+    def record_channels_response(self, job_id: str, owner_token: str, observation: dict) -> None:
+        """Retain only Channels' observed status envelope and server work ID."""
+        fields = observation.get("receipt_fields")
+        def valid_field(key, value):
+            if key == 'data.objectId':
+                return (isinstance(value, str) and 1 <= len(value) <= 256
+                        and all(c.isascii() and (c.isalnum() or c in '_+=/-') for c in value))
+            return key in {'errCode', 'data.baseResp.errcode'} and type(value) is int and -(2**31) <= value < 2**31
+        if (set(observation) != {"http_status", "receipt_fields"}
+                or type(observation.get("http_status")) is not int or not 100 <= observation["http_status"] <= 599
+                or not isinstance(fields, dict)
+                or any(not valid_field(key, value) for key, value in fields.items())):
+            raise TaskError("INVALID_RESULT", "Channels response evidence is invalid")
+        with self.transaction() as connection:
+            self._require_owner(connection, job_id, owner_token)
+            job = self._job_row(connection, job_id)
+            if job["platform"] != "tencent" or job["status"] != "SUBMITTING":
+                raise TaskError("INVALID_STATE", "Response evidence requires an active Channels submission")
+            evidence = json.loads(job["evidence_json"])
+            evidence.append({"kind": "submission_response", "attempt_id": job["attempt_id"], **observation})
+            connection.execute("UPDATE jobs SET evidence_json=? WHERE job_id=?", (_canonical_json(evidence), job_id))
+
+    def recover_captured_receipt(self, job_id: str, parser: Callable[[dict], str | None]) -> dict:
+        """Reparse one saved live XHS response after independent work confirmation.
+
+        The caller holds the account maintenance lease. Only the receipt link
+        and its provenance change; no delivery state or action count changes.
+        """
+        with self.transaction() as connection:
+            job = self._job_row(connection,job_id)
+            manifest = json.loads(job["manifest_json"])
+            if job["platform"] != "xiaohongshu" or manifest["content_type"] != "video":
+                raise TaskError("UNSUPPORTED", "Captured receipt recovery is only available for XHS video")
+            if job["status"] != "COMPLETED" or job["submission"] != "CONFIRMED":
+                raise TaskError("INVALID_STATE", "Receipt recovery requires an independently confirmed work")
+            evidence = json.loads(job["evidence_json"])
+            responses = [item for item in evidence if item.get("kind") == "submission_response"
+                         and item.get("attempt_id") == job["attempt_id"]]
+            if len(responses) != 1:
+                raise TaskError("RECONCILIATION_UNAVAILABLE", "A unique saved creation response is required")
+            response = responses[0]
+            fields = response.get("receipt_fields")
+            # This narrow recovery format is backed by the real creator reply.
+            # A confirmed work ID by itself is never a creation receipt.
+            if (response.get("http_status") != 200 or response.get("envelope") != "top"
+                    or response.get("id_fields") != ["data.id"] or not isinstance(fields,dict)
+                    or set(fields) != {"success","result","data.id"} or fields["success"] is not True
+                    or type(fields["result"]) is not int or fields["result"] != 0):
+                raise TaskError("RECONCILIATION_UNAVAILABLE", "Saved creation response is not a positive live envelope")
+            content_id = parser({"success":fields["success"],"result":fields["result"],"data":{"id":fields["data.id"]}})
+            attempt = connection.execute("SELECT * FROM attempts WHERE attempt_id=?",(job["attempt_id"],)).fetchone()
+            if (content_id is None or content_id != job["content_id"] or attempt is None
+                    or attempt["status"] != "COMPLETED" or attempt["submit_count"] != 1
+                    or attempt["receipt_id"] not in {None,content_id}):
+                raise TaskError("RECONCILIATION_UNAVAILABLE", "Captured receipt does not match this confirmed attempt")
+            if attempt["receipt_id"] is None:
+                connection.execute("UPDATE attempts SET receipt_id=? WHERE attempt_id=?",(content_id,job["attempt_id"]))
+                evidence.append({"kind":"receipt_recovered","attempt_id":job["attempt_id"],"content_id":content_id,
+                                 "source":"submission_response","observed_at":self._utc_now()})
+                connection.execute("UPDATE jobs SET evidence_json=? WHERE job_id=?",(_canonical_json(evidence),job_id))
+            return {"schema_version":1,"job_id":job_id,"attempt_id":job["attempt_id"],"receipt_id":content_id,
+                    "status":job["status"],"submission":job["submission"],"content_id":job["content_id"]}
 
     def record_verification(self, job_id: str, owner_token: str, state: str) -> None:
         """Persist this owner's bounded human-verification progress and pause."""
@@ -901,10 +1025,17 @@ class Store:
             previous_evidence = self._decode(job["evidence_json"])
             evidence = list(previous_evidence) if isinstance(previous_evidence, list) else []
             if work is not None:
-                evidence.append({
+                observation = {
                     "kind": work["source"], "content_id": work["content_id"],
                     "account_id": work["account_id"], "created_at": work["created_at"], "observed_at": now,
-                })
+                }
+                if work.get("evidence_scope") in {"xiaohongshu_video_v1", "channels_video_v1"}:
+                    observation.update({"remote_video_id":work["remote_video_id"],
+                                        "remote_media_md5":work["remote_media_md5"],
+                                        "listing_complete":work.get("listing_complete") is True})
+                if work.get('evidence_scope') == 'channels_video_v1':
+                    observation['account_evidence'] = work['account_evidence']
+                evidence.append(observation)
             connection.execute(
                 """UPDATE jobs SET status = ?, submission = ?, platform_result = ?, content_id = ?,
                    verified_at = ?, error_json = ?, warnings_json = ?, evidence_json = ?, updated_at = ? WHERE job_id = ?""",

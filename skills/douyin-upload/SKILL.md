@@ -1,70 +1,28 @@
 ---
 name: douyin-upload
-description: 当 agent 需要通过已安装的 `sau` CLI 完成抖音登录、cookie 校验、视频上传或图文发布时使用这个 skill。该 skill 适用于已经安装 `social-auto-upload` 且可调用 `sau` 命令的环境。优先使用这个 skill 进行稳定的命令式抖音工作流，而不是一开始就阅读 uploader 源码。
+description: 使用 social-auto-upload 的 sau CLI 完成抖音扫码登录、在线账号识别与绑定、有限视频发布、仅准备验收及原任务结果核对。新版发布入口为 sau jobs；不将旧 upload-video 或 upload-note 帮助条目当作可执行发表能力。
 ---
 
-# 抖音上传 Skill
+# 抖音任务发布
 
-优先把 `sau` 作为主接口。
+先读取[共用任务技能](../social-auto-upload/SKILL.md)，按当前 CLI capabilities 判断能力。普通操作优先 CLI，无需先读 uploader 源码。
 
-不要假设当前环境一定能读取仓库源码。
-不要一开始就去读 `uploader/`。
-只有在命令不可用或 CLI 执行失败时，才回退到故障排查说明。
+当前有限范围为原创、无 AI 的视频、标题/正文和立即公开发表，支持范围以 capabilities 和 docs/douyin-video.md 为准。图文真实发布仍 restricted。完整 CLI 验收缺口仍在能力报告中；不能把某次人工验证后的只读恢复当作首轮自动续行已验收。
 
-## 功能概览
+## 执行要点
 
-| 功能 | 命令入口 | 说明 |
-| --- | --- | --- |
-| 抖音登录 | `sau douyin login --account <name>` | 生成或刷新指定账号的 cookie |
-| cookie 校验 | `sau douyin check --account <name>` | 检查指定账号 cookie 是否有效 |
-| 视频上传 | `sau douyin upload-video ...` | 上传并发布抖音视频 |
-| 图文上传 | `sau douyin upload-note ...` | 上传并发布抖音图文 |
+- 登录/检查仍使用 `sau douyin login --account ALIAS --headed` 和 `sau douyin check --account ALIAS`。
+- 扫码只保存会话；agent 按[账号流程](../social-auto-upload/references/accounts.md)读取在线稳定 ID，再调用正式 bind-account。不同账号用不同别名，用户不必手动找 ID。
+- 发布用不可变清单的 `platform="douyin"`、正确 account 和事实声明，先 enqueue 再指定 job run。旧发表入口返回迁移错误，禁止用旧类代替。
+- 标题/正文由实际素材和已授权要求确定。`READY / NOT_SUBMITTED` 只代表准备；`UNKNOWN_COMMIT` 只允许原任务恢复，不换键重发。
+- 保留固定数据库和运行目录，检查 submit_count，分别报告任务状态与平台审核/接收状态。
 
-元数据约定：
+平台细节见[使用说明](../../docs/douyin-video.md)；命令见[CLI 契约](references/cli-contract.md)，环境见[运行前提](references/runtime-requirements.md)，失败见[故障处理](references/troubleshooting.md)。
 
-- 视频使用 `title + desc + tags`
-- 图文使用 `title + note + tags`
+## 示例
 
-## 默认工作流
+`scripts/examples/douyin_cli_template.py` 默认预览一条命令，`--execute` 才执行。PowerShell/bash 包装也遵循这一规则。先完成绑定；示例不会自动连续登录、发布视频和发布图文。
 
-1. 先确认 `references/runtime-requirements.md` 里的运行前提。
-2. 再确认 `references/cli-contract.md` 里的命令契约。
-3. 执行匹配的 `sau douyin ...` 命令。
-4. 如果命令失败，再看 `references/troubleshooting.md`。
-
-## 支持动作
-
-- 使用 `sau douyin login --account <name>` 登录抖音
-- 使用 `sau douyin check --account <name>` 校验 cookie 是否有效
-- 使用 `sau douyin upload-video ...` 上传抖音视频
-- 使用 `sau douyin upload-note ...` 上传抖音图文
-
-## 命令选择建议
-
-- 当用户需要新的 cookie，或现有 cookie 已失效时，使用 `login`
-- 当用户只需要确认 cookie 状态时，使用 `check`
-- 当用户要发布视频时，使用 `upload-video`
-- 当用户要发布图文时，使用 `upload-note`
-
-## 执行前检查
-
-- 先确认当前 shell 里是否可以调用 `sau`
-- 如果 `sau` 不可用，按 `references/runtime-requirements.md` 里的回退方式处理
-- 当用户明确指定无头或有头模式时，显式传 `--headless` 或 `--headed`
-- 只有用户明确要求定时发布时，才使用 `--schedule`
-- 如果登录流程生成了本地二维码图片，不要只把图片路径告诉用户
-- 二维码图片本身就是给用户扫码的，优先直接把本地图片展示/发送给用户
-
-## 模板文件
-
-当你需要稳定的命令模板时，使用 `scripts/examples/` 下的文件：
-
-- `douyin_commands.ps1`
-- `douyin_commands.sh`
-- `douyin_cli_template.py`
-
-## 参考文档
-
-- 运行前提：`references/runtime-requirements.md`
-- CLI 契约：`references/cli-contract.md`
-- 故障排查：`references/troubleshooting.md`
+```powershell
+uv run --frozen --offline --no-sync python skills/douyin-upload/scripts/examples/douyin_cli_template.py capabilities --db C:/Users/Chinese/.sau/tasks.sqlite3
+```

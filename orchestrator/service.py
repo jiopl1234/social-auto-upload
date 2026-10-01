@@ -94,6 +94,14 @@ class TaskService:
     def attempts(self, job_id: str) -> list[dict]:
         return self.store.attempts(job_id)
 
+    def recover_receipt(self, job_id: str) -> dict:
+        from orchestrator.platforms.xiaohongshu_delivery import XiaohongshuVideoPort
+
+        job = self.store.get(job_id)
+        with self.maintenance(job["platform"],job["account"]) as lease:
+            lease.assert_owner()
+            return self.store.recover_captured_receipt(job_id,XiaohongshuVideoPort.receipt_content_id)
+
     def preflight(self, job: dict) -> Any:
         from orchestrator.accounts import get_binding
         from orchestrator.manifest import preflight_manifest

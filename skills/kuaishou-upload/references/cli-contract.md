@@ -17,7 +17,7 @@ sau kuaishou login --account <account>
   - 如果登录过程中生成本地二维码图片，agent 应优先直接把图片展示/发送给用户扫码，而不是只回传路径
 - 账号说明:
   - `--account` 传的是用户自定义的 `account_name`，不是固定只能叫 `creator`
-  - 一个 `account_name` 对应一个账号文件，可用于多账号隔离和并发任务
+  - 一个 `account_name` 对应一个账号文件，用于账号隔离；不据此宣称并发发布安全
 
 ### 校验 cookie
 
@@ -102,3 +102,5 @@ YYYY-MM-DD HH:MM
 - 视频描述字段统一使用 `--desc`
 - 图文正文统一使用 `--note`
 - `upload-note` 当前要求传入真实的多张图片文件，而不是同一路径重复多次
+
+本平台不支持 `sau jobs` 的任务交付协议；账号别名隔离不证明并发安全。示例默认预览一条命令，显式 --execute 才运行；未通过本次真实发布验收。
